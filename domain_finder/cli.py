@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import sys
 import time
+import math
+import concurrent.futures
 from typing import List, Optional
 
 import typer
@@ -51,6 +53,63 @@ def _pick_provider(
     raise typer.BadParameter("provider должен быть 'chat01' или 'openrouter'")
 
 
+def _generate_domains_parallel(
+    llm: BaseProvider,
+    *,
+    topic: str,
+    tlds: List[str],
+    per_request: int,
+    language: str,
+    min_len: int,
+    max_len: int,
+    workers: int,
+) -> str:
+    """
+    Делает несколько параллельных запросов к LLM и объединяет ответы в один текст.
+    Сохраняем исходную архитектуру: далее будет единый парсинг и лимитирование до `per_request`.
+    """
+    if workers <= 1:
+        return llm.generate_domains(
+            topic=topic,
+            tlds=tlds,
+            count=per_request,
+            language=language,
+            min_len=min_len,
+            max_len=max_len,
+        )
+
+    per_call = max(1, math.ceil(per_request / workers))
+    texts: List[str] = []
+
+    console.print(f"[green]LLM-запросов параллельно:[/] {workers}  [dim](~{per_call} доменов на запрос)[/dim]")
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        futs = [
+            pool.submit(
+                llm.generate_domains,
+                topic,
+                tlds,
+                per_call,
+                language,
+                min_len,
+                max_len,
+            )
+            for _ in range(workers)
+        ]
+        for fut in concurrent.futures.as_completed(futs):
+            try:
+                texts.append(fut.result())
+            except LLMProviderError as e:
+                console.print(f"[red]LLM-запрос завершился ошибкой:[/] {e}")
+            except Exception as e:  # noqa: BLE001
+                console.print(f"[red]Неожиданная ошибка LLM-запроса:[/] {e}")
+
+    if not texts:
+        raise LLMProviderError("Все параллельные запросы к LLM завершились ошибкой.")
+
+    return "\n".join(texts)
+
+
 @app.command("run")
 def run(
     topic: str = typer.Option(
@@ -58,6 +117,7 @@ def run(
     ),
     iterations: int = typer.Option(5, "--iterations", "-i", min=1, help="Сколько проходов генерации/проверки выполнить."),
     per_request: int = typer.Option(100, "--per-request", "-n", min=1, max=300, help="Сколько доменов запросить у модели за одну итерацию."),
+    llm_workers: int = typer.Option(1, "--llm-workers", min=1, help="Параллельных запросов к LLM на итерацию (объединяются и далее парсятся единожды)."),
     tld: List[str] = typer.Option(["com"], "--tld", help="Список доменных зон. Указывайте без точки: com, io, ai."),
     language: str = typer.Option("ru", "--lang", help="Язык промпта (ru/en)."),
     provider: str = typer.Option("chat01", "--provider", "-p", help="Провайдер LLM: chat01 или openrouter."),
@@ -118,15 +178,17 @@ def run(
 
     for it in range(1, iterations + 1):
         console.rule(f"[bold]Итерация {it}/{iterations}[/bold]")
-        # 1) Генерация доменов
+        # 1) Генерация доменов (возможна параллельная отправка нескольких запросов к LLM)
         try:
-            raw_text = llm.generate_domains(
+            raw_text = _generate_domains_parallel(
+                llm,
                 topic=topic,
                 tlds=[t.lstrip(".").lower() for t in tld],
-                count=per_request,
+                per_request=per_request,
                 language=language,
                 min_len=min_len,
                 max_len=max_len,
+                workers=llm_workers,
             )
         except LLMProviderError as e:
             console.print(f"[red]Не удалось получить предложения от LLM:[/] {e}")
@@ -225,7 +287,8 @@ def wizard() -> None:
 
     topic = typer.prompt("Опишите тематику (напр.: 'нейросети, бенчмарки, сравнение моделей')", default="нейросети, бенчмарки, сравнение моделей")
     iterations = typer.prompt("Сколько итераций выполнить?", default=5)
-    per_request = typer.prompt("Сколько доменов запрашивать за раз?", default=100)
+    per_request = typer.prompt("Сколько доменов запрашивать за раз (итого на итерацию)?", default=100)
+    llm_workers = typer.prompt("Сколько параллельных запросов к LLM на итерацию?", default=1)
     tld = typer.prompt("Доменные зоны (через запятую, без точки)", default="com")
     provider = typer.prompt("Провайдер (chat01 / openrouter)", default="chat01")
     model = typer.prompt("Модель (Enter — по умолчанию)", default="")
@@ -243,6 +306,7 @@ def wizard() -> None:
     try:
         iterations = int(iterations)
         per_request = int(per_request)
+        llm_workers = int(llm_workers)
         max_workers = int(max_workers)
         min_len = int(min_len)
         max_len = int(max_len)
@@ -260,6 +324,7 @@ def wizard() -> None:
         topic=topic,
         iterations=iterations,
         per_request=per_request,
+        llm_workers=llm_workers,
         tld=tld_list,
         language=language,
         provider=provider,
