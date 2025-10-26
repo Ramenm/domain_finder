@@ -1,0 +1,18 @@
+[project]
+name = "domain-finder"
+version = "1.0.0"
+description = "Генератор доменных имён с проверкой занятости (RDAP/WHOIS) и удобным CLI."
+requires-python = ">=3.9"
+dependencies = [
+  "typer>=0.12.3",
+  "rich>=13.7.1",
+  "requests>=2.32.3",
+  "python-dotenv>=1.0.1",
+  "python-whois>=0.9.4",
+]
+
+[project.scripts]
+domain-finder = "domain_finder.cli:app"
+
+[tool.typer]
+pretty_exceptions_show_locals = true
