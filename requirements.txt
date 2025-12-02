@@ -1,5 +1,12 @@
+# NOTE: Dependencies are now managed in pyproject.toml
+# This file is kept for backward compatibility only.
+# To install dependencies, use: pip install -e .
+# Or generate this file from pyproject.toml using: pip-compile pyproject.toml
+
 typer>=0.12.3
 rich>=13.7.1
-requests>=2.32.3
-python-dotenv>=1.0.1
+httpx>=0.27.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
 python-whois>=0.9.4
+tenacity>=8.0.0

@@ -1,3 +1,5 @@
+"""Prompt templates for domain generation."""
+
 from typing import List
 
 
@@ -10,12 +12,22 @@ def build_prompt(
     max_len: int = 15,
 ) -> str:
     """
-    Формируем строгий промпт для LLM, чтобы получить список доменов.
+    Build a prompt for LLM to generate domain names.
+
+    Args:
+        topic: Topic/theme for domain generation
+        tlds: List of allowed TLDs
+        count: Number of domains to generate
+        language: Language for prompt ('ru' or 'en')
+        min_len: Minimum label length
+        max_len: Maximum label length
+
+    Returns:
+        Formatted prompt string
     """
     tlds_str = ", ".join(f".{t.lower().lstrip('.')}" for t in tlds)
     lang = language.lower().strip()
 
-    # Короткая инструкция, чтобы модель вернула только домены, без комментариев.
     if lang.startswith("ru"):
         header = (
             "Сгенерируй список уникальных, коротких и запоминающихся доменных имён "
@@ -49,3 +61,4 @@ def build_prompt(
         footer = "Return domains only, without any extra text."
 
     return f"{header}\n{rules}\n{footer}"
+
