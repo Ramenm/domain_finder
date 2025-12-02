@@ -86,10 +86,25 @@ class DomainChecker(DomainCheckerPort):
         if self.prefer_rdap:
             try:
                 result = self.rdap_client.check_domain(domain)
-                # If RDAP says unavailable and fallback is enabled, try WHOIS for confirmation
-                if not result.available and self.whois_fallback:
-                    whois_result = self.whois_client.check_domain(domain)
-                    return whois_result
+                
+                # If fallback is enabled, always verify with WHOIS for accuracy
+                if self.whois_fallback:
+                    try:
+                        whois_result = self.whois_client.check_domain(domain)
+                        # If WHOIS says unavailable, trust it (more reliable for registered domains)
+                        if not whois_result.available:
+                            return whois_result
+                        # If both say available, trust RDAP (faster and reliable for availability)
+                        if result.available:
+                            return result
+                        # If RDAP says unavailable but WHOIS says available, 
+                        # trust WHOIS (rare case, but WHOIS might be more accurate)
+                        return whois_result
+                    except Exception:  # noqa: BLE001
+                        # If WHOIS fails (timeout, etc.), trust RDAP result
+                        return result
+                
+                # No fallback - return RDAP result
                 return result
             except DomainCheckError:
                 # If RDAP fails (timeout, service unavailable, etc.), use WHOIS fallback
