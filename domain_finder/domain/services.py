@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import time
 from typing import List, Optional
 
 from .errors import ValidationError
@@ -223,10 +224,21 @@ class DomainCheckService:
                     # This avoids caching error states as "unavailable"
                     if result.source != "unknown":
                         self.repository.cache_result(result)
-            except Exception:  # noqa: BLE001
-                # If checker fails completely, don't cache anything
-                # Results will be empty, which is better than wrong cached data
-                pass
+            except Exception as e:  # noqa: BLE001
+                # If checker fails completely, mark all as unavailable to avoid false positives
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Domain checker failed completely: {e}")
+                # Mark all unchecked domains as unavailable (conservative approach)
+                for domain in domains_to_check:
+                    if domain not in results:
+                        from domain_finder.domain.models import DomainCheckResult
+                        results[domain] = DomainCheckResult(
+                            domain=domain,
+                            available=False,
+                            source="unknown",
+                            checked_at=time.time(),
+                        )
 
         return results
 

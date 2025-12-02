@@ -25,7 +25,7 @@ class DomainChecker(DomainCheckerPort):
     def __init__(
         self,
         prefer_rdap: bool = True,
-        whois_fallback: bool = False,
+        whois_fallback: bool = True,  # Enable fallback by default for reliability
         max_workers: int = 20,
         rdap_timeout: float = 10.0,
         max_connections: int = 100,
@@ -84,12 +84,19 @@ class DomainChecker(DomainCheckerPort):
             DomainCheckResult with availability status
         """
         if self.prefer_rdap:
-            result = self.rdap_client.check_domain(domain)
-            # If RDAP says unavailable and fallback is enabled, try WHOIS
-            if not result.available and self.whois_fallback:
-                whois_result = self.whois_client.check_domain(domain)
-                return whois_result
-            return result
+            try:
+                result = self.rdap_client.check_domain(domain)
+                # If RDAP says unavailable and fallback is enabled, try WHOIS for confirmation
+                if not result.available and self.whois_fallback:
+                    whois_result = self.whois_client.check_domain(domain)
+                    return whois_result
+                return result
+            except DomainCheckError:
+                # If RDAP fails (timeout, service unavailable, etc.), use WHOIS fallback
+                if self.whois_fallback:
+                    return self.whois_client.check_domain(domain)
+                # If no fallback, re-raise the error
+                raise
         else:
             return self.whois_client.check_domain(domain)
 

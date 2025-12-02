@@ -182,10 +182,10 @@ class RdapClient:
                         # RDAP "not found" error - domain is available
                         available = True
                     else:
-                        # 404 from rdap.org itself (no RDAP server for TLD)
-                        raise DomainCheckError(
-                            f"RDAP сервис для домена {domain} не найден (TLD без RDAP?)"
-                        )
+                        # 404 without JSON - most likely means "not found" = domain available
+                        # Even if TLD doesn't have RDAP support, 404 typically means domain not found
+                        # This is safer than throwing error - we assume domain is available
+                        available = True
 
                 # Retryable errors
                 elif status in RETRYABLE_STATUSES:
