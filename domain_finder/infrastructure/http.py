@@ -84,13 +84,17 @@ class HttpClient:
             except httpx.HTTPStatusError as e:
                 last_exc = e
                 if e.response.status_code < 500:  # Don't retry client errors
-                    raise ProviderError(f"HTTP {e.response.status_code}: {e.response.text}")
+                    raise ProviderError(
+                        f"HTTP-ошибка {e.response.status_code}: {e.response.text[:200]}"
+                    )
             except Exception as e:  # noqa: BLE001
                 last_exc = e
                 delay = random.uniform(self.backoff_min, self.backoff_max) * attempt
                 time.sleep(delay)
 
-        raise ProviderError(f"Request failed after {self.retries} attempts: {last_exc}")
+        raise ProviderError(
+            f"Запрос не выполнен после {self.retries} попыток: {last_exc}"
+        )
 
     def get(
         self,

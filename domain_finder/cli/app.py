@@ -6,7 +6,7 @@ from domain_finder.cli.commands import run, wizard
 
 app = typer.Typer(
     add_completion=False,
-    help="⚡ Domain Finder — генератор и проверщик доменов с LLM и RDAP/WHOIS проверкой.",
+    help="⚡ Domain Finder — генератор и проверщик доменных имён с использованием LLM и проверкой доступности через RDAP/WHOIS.",
 )
 
 # Register commands

@@ -25,10 +25,10 @@ console = Console()
 
 def _header() -> None:
     """Display application header."""
-    title = "[bold cyan]Domain Finder[/] — генератор и проверщик доменов"
+    title = "[bold cyan]Domain Finder[/] — генератор и проверщик доменных имён"
     sub = (
-        "[dim]Выбирайте провайдера (по умолчанию openai), тематику, количество итераций и доменов за итерацию.\n"
-        "Проверка доступности — RDAP по умолчанию (быстро и надёжно).[/dim]"
+        "[dim]Выберите провайдера LLM (по умолчанию: OpenAI), укажите тематику, количество итераций и доменов за итерацию.\n"
+        "Проверка доступности выполняется через RDAP (быстро и надёжно).[/dim]"
     )
     console.print(Panel.fit(sub, title=title, border_style="cyan", box=box.ROUNDED))
 
@@ -74,34 +74,34 @@ def _create_provider(
 
 def run(
     topic: str = typer.Option(
-        ..., "--topic", "-t", help="Тематика доменов (напр.: 'сравнение нейросетей, бенчмарки, метрики')."
+        ..., "--topic", "-t", help="Тематика доменов (например: 'сравнение нейросетей, бенчмарки, метрики')."
     ),
-    iterations: int = typer.Option(5, "--iterations", "-i", min=1, help="Сколько проходов генерации/проверки выполнить."),
-    per_request: int = typer.Option(100, "--per-request", "-n", min=1, max=300, help="Сколько доменов запросить у модели за одну итерацию."),
-    llm_workers: int = typer.Option(1, "--llm-workers", min=1, help="Параллельных запросов к LLM на итерацию (объединяются и далее парсятся единожды)."),
+    iterations: int = typer.Option(5, "--iterations", "-i", min=1, help="Количество проходов генерации и проверки."),
+    per_request: int = typer.Option(100, "--per-request", "-n", min=1, max=300, help="Количество доменов для запроса у модели за одну итерацию."),
+    llm_workers: int = typer.Option(1, "--llm-workers", min=1, help="Количество параллельных запросов к LLM на итерацию (результаты объединяются и парсятся один раз)."),
     tld: List[str] = typer.Option(["com"], "--tld", help="Список доменных зон. Указывайте без точки: com, io, ai."),
-    language: str = typer.Option("ru", "--lang", help="Язык промпта (ru/en)."),
-    provider: str = typer.Option("openai", "--provider", "-p", help="Провайдер LLM: openai."),
-    model: Optional[str] = typer.Option(None, "--model", "-m", help="Имя модели. По умолчанию: из OPENAI_MODEL в .env."),
-    temperature: float = typer.Option(0.7, "--temperature", help="Температура генерации LLM."),
-    timeout: float = typer.Option(60.0, "--timeout", help="Таймаут запроса к LLM (сек)."),
+    language: str = typer.Option("ru", "--lang", help="Язык промпта для LLM (ru/en)."),
+    provider: str = typer.Option("openai", "--provider", "-p", help="Провайдер LLM (openai)."),
+    model: Optional[str] = typer.Option(None, "--model", "-m", help="Имя модели. По умолчанию берётся из переменной OPENAI_MODEL в .env."),
+    temperature: float = typer.Option(0.7, "--temperature", help="Температура генерации для LLM (0.0-2.0)."),
+    timeout: float = typer.Option(60.0, "--timeout", help="Таймаут запроса к LLM в секундах."),
     use_rdap: Optional[bool] = typer.Option(
         None,
         "--rdap/--whois",
-        help="Предпочитать RDAP (да) или WHOIS (нет). Если не указано — читается из .env USE_RDAP.",
+        help="Предпочитать RDAP (--rdap) или WHOIS (--whois). Если не указано, значение берётся из переменной USE_RDAP в .env.",
     ),
     whois_fallback: bool = typer.Option(
-        False, "--whois-fallback", help="Если RDAP не даст однозначного ответа — пробовать WHOIS."
+        False, "--whois-fallback", help="Использовать WHOIS как резервный метод, если RDAP не дал однозначного ответа."
     ),
-    max_workers: int = typer.Option(20, "--workers", help="Кол-во потоков для проверки RDAP/WHOIS."),
-    min_len: int = typer.Option(4, "--min-len", help="Мин. длина второй части домена."),
-    max_len: int = typer.Option(15, "--max-len", help="Макс. длина второй части домена."),
-    cooldown: float = typer.Option(2.0, "--cooldown", help="Пауза (сек) между итерациями."),
-    cache_file: str = typer.Option("domains_cache.json", "--cache-file", help="Файл кэша с результатами проверок."),
+    max_workers: int = typer.Option(20, "--workers", help="Количество потоков для параллельной проверки доменов через RDAP/WHOIS."),
+    min_len: int = typer.Option(4, "--min-len", help="Минимальная длина второй части домена (без TLD)."),
+    max_len: int = typer.Option(15, "--max-len", help="Максимальная длина второй части домена (без TLD)."),
+    cooldown: float = typer.Option(2.0, "--cooldown", help="Пауза в секундах между итерациями."),
+    cache_file: str = typer.Option("domains_cache.json", "--cache-file", help="Путь к файлу кэша с результатами проверок доменов."),
     clear_cache: bool = typer.Option(False, "--clear-cache", help="Очистить кэш перед запуском."),
-    results_txt: str = typer.Option("results.txt", "--results", help="Файл для сохранения доступных доменов (.txt)."),
-    results_csv: Optional[str] = typer.Option("results.csv", "--results-csv", help="Файл для сохранения CSV-отчёта."),
-    skip_check: bool = typer.Option(False, "--skip-check", help="Не выполнять RDAP/WHOIS — просто сохранить сгенерированные домены."),
+    results_txt: str = typer.Option("results.txt", "--results", help="Путь к файлу для сохранения доступных доменов (.txt)."),
+    results_csv: Optional[str] = typer.Option("results.csv", "--results-csv", help="Путь к файлу для сохранения CSV-отчёта с результатами."),
+    skip_check: bool = typer.Option(False, "--skip-check", help="Пропустить проверку доступности (RDAP/WHOIS) и сохранить только сгенерированные домены."),
 ) -> None:
     """
     Основной сценарий: генерация доменов -> фильтрация/нормализация -> проверка доступности -> сохранение результата.
@@ -116,19 +116,20 @@ def run(
     # Create provider
     try:
         llm_provider = _create_provider(provider, model, temperature, timeout, settings)
-        console.print(f"[green]Провайдер:[/] {provider}  [green]Модель:[/] {llm_provider.config.model}")
+        provider_display = getattr(llm_provider, "display_name", provider)
+        console.print(f"[green]✓ Провайдер:[/] {provider_display}  [green]Модель:[/] {llm_provider.config.model}")
     except ProviderError as e:
-        console.print(f"[red]Ошибка инициализации LLM:[/] {e}")
+        console.print(f"[red]✗ Ошибка инициализации LLM-провайдера:[/] {e}")
         raise typer.Exit(code=2)
     except Exception as e:  # noqa: BLE001
-        console.print(f"[red]Неверные параметры провайдера:[/] {e}")
+        console.print(f"[red]✗ Неверные параметры провайдера:[/] {e}")
         raise typer.Exit(code=2)
 
     # Create infrastructure components
     cache = CacheManager(cache_file)
     if clear_cache:
         cache.clear()
-        console.print("[yellow]Кэш очищен.[/yellow]")
+        console.print("[yellow]⚠ Кэш очищен.[/yellow]")
 
     writer = ResultWriter(txt_path=results_txt, csv_path=results_csv)
     checker = DomainChecker(
@@ -174,23 +175,23 @@ def run(
     try:
         result = use_case.execute(request)
     except Exception as e:  # noqa: BLE001
-        console.print(f"[red]Ошибка выполнения:[/] {e}")
+        console.print(f"[red]✗ Ошибка выполнения:[/] {e}")
         raise typer.Exit(code=1)
 
     # Display results
-    console.rule("[bold]Итоги[/bold]")
+    console.rule("[bold]Результаты поиска[/bold]")
     table = Table(title="Статистика сессии", box=box.SIMPLE)
-    table.add_column("Параметр")
-    table.add_column("Значение")
-    table.add_row("Итераций", str(result.total_iterations))
-    table.add_row("Сгенерировано (уник.)", str(result.total_generated))
-    table.add_row("Доступно найдено", str(result.total_available))
-    table.add_row("Файл .txt", result.results_txt)
-    table.add_row("Файл .csv", result.results_csv or "—")
+    table.add_column("Параметр", style="cyan")
+    table.add_column("Значение", style="green")
+    table.add_row("Итераций выполнено", str(result.total_iterations))
+    table.add_row("Доменов сгенерировано (уникальных)", str(result.total_generated))
+    table.add_row("Доступных доменов найдено", str(result.total_available))
+    table.add_row("Файл результатов (.txt)", result.results_txt)
+    table.add_row("Файл результатов (.csv)", result.results_csv or "—")
     console.print(table)
 
     if result.available_domains:
         ResultWriter.show_table(result.available_domains)
 
-    console.print("[dim]Готово.[/dim]")
+    console.print("[green]✓ Поиск завершён успешно.[/green]")
 

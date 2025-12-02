@@ -114,10 +114,24 @@ class RunDomainSearchUseCase:
                 # Collect available domains
                 newly_available: List[str] = []
                 to_write = []
+                checked_count = 0
+                available_count = 0
+                
                 for domain, result in results.items():
+                    checked_count += 1
                     if result.available:
+                        available_count += 1
                         newly_available.append(domain)
                         to_write.append((domain, result.source, result.checked_at))
+
+                # Debug: log statistics for this iteration
+                if checked_count > 0:
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.debug(
+                        f"Iteration: checked {checked_count} domains, "
+                        f"found {available_count} available"
+                    )
 
                 if newly_available:
                     self.writer.append_available(to_write)

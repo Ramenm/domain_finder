@@ -9,6 +9,7 @@ from typing import List
 from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TimeElapsedColumn, TimeRemainingColumn
 
+from domain_finder.domain.errors import DomainCheckError
 from domain_finder.domain.models import DomainCheckResult
 from domain_finder.domain.ports import DomainCheckerPort
 from domain_finder.infrastructure.whois.rdap_client import RdapClient
@@ -86,16 +87,25 @@ class DomainChecker(DomainCheckerPort):
             transient=True,
             console=console,
         ) as progress:
-            task = progress.add_task("Checking domains...", total=len(unique_domains))
+            task = progress.add_task("[cyan]Проверка доменов...[/cyan]", total=len(unique_domains))
             futures = {pool.submit(self.check_domain, domain): domain for domain in unique_domains}
 
             for future in concurrent.futures.as_completed(futures):
+                domain = futures[future]
                 try:
                     result = future.result()
                     results[result.domain] = result
-                except Exception:  # noqa: BLE001
-                    domain = futures[future]
-                    # On error, mark as unavailable
+                except DomainCheckError as e:
+                    # For domain check errors (timeouts, service unavailable), 
+                    # mark as unavailable to avoid false positives
+                    results[domain] = DomainCheckResult(
+                        domain=domain,
+                        available=False,
+                        source="unknown",
+                        checked_at=time.time(),
+                    )
+                except Exception as e:  # noqa: BLE001
+                    # On other errors, mark as unavailable
                     results[domain] = DomainCheckResult(
                         domain=domain,
                         available=False,

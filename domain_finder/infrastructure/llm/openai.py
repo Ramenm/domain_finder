@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Optional
+from urllib.parse import urlparse
 
 from domain_finder.domain.errors import ProviderError
 from domain_finder.domain.models import ProviderConfig
@@ -37,8 +38,8 @@ class OpenAIProvider(BaseLLMProvider):
         api_key = settings.get_api_key("openai")
         if not api_key:
             raise ProviderError(
-                "OPENAI_API_KEY not found in environment. "
-                "Please set it in .env file or environment variables."
+                "OPENAI_API_KEY не найден в переменных окружения. "
+                "Установите его в файле .env или в переменных окружения."
             )
 
         if config is None:
@@ -59,6 +60,59 @@ class OpenAIProvider(BaseLLMProvider):
         base_url = settings.get_openai_base_url()
         self.base_url = base_url.rstrip("/")
         self.url = f"{self.base_url}/chat/completions"
+        self._display_name = self._get_display_name(base_url)
+
+    def _get_display_name(self, base_url: str) -> str:
+        """
+        Get display name for provider based on base URL.
+        
+        Args:
+            base_url: Base URL of the API endpoint
+            
+        Returns:
+            Display name for the provider
+        """
+        base_url_lower = base_url.lower()
+        
+        # Check for known providers by URL pattern
+        if "api.openai.com" in base_url_lower:
+            return "OpenAI"
+        elif "openai" in base_url_lower:
+            return "OpenAI (custom)"
+        elif "anthropic" in base_url_lower or "claude" in base_url_lower:
+            return "Anthropic"
+        elif "google" in base_url_lower or "gemini" in base_url_lower:
+            return "Google"
+        elif "mistral" in base_url_lower:
+            return "Mistral"
+        elif "groq" in base_url_lower:
+            return "Groq"
+        elif "together" in base_url_lower:
+            return "Together AI"
+        elif "deepseek" in base_url_lower:
+            return "DeepSeek"
+        else:
+            # Extract domain from URL for custom providers
+            try:
+                parsed = urlparse(base_url)
+                domain = parsed.netloc or parsed.path.split("/")[0]
+                if domain:
+                    # Remove port if present
+                    domain = domain.split(":")[0]
+                    # Get main domain part
+                    parts = domain.split(".")
+                    if len(parts) >= 2:
+                        main_domain = parts[-2]  # e.g., "example" from "api.example.com"
+                        return main_domain.capitalize()
+                    return domain.capitalize()
+            except Exception:  # noqa: BLE001
+                pass
+            return "Custom Provider"
+
+    @property
+    def display_name(self) -> str:
+        """Get display name for this provider."""
+        return self._display_name
 
     def _generate_with_prompt(self, prompt: str) -> str:
         """
@@ -87,7 +141,7 @@ class OpenAIProvider(BaseLLMProvider):
             data = self._http_client.post(self.url, headers, payload)
             return data["choices"][0]["message"]["content"]
         except KeyError as e:
-            raise ProviderError(f"Unexpected OpenAI response format: {e}; data={data!r}")
+            raise ProviderError(f"Неожиданный формат ответа от OpenAI API: {e}; data={data!r}")
         except Exception as e:  # noqa: BLE001
-            raise ProviderError(f"OpenAI API error: {e}")
+            raise ProviderError(f"Ошибка при обращении к OpenAI API: {e}")
 
