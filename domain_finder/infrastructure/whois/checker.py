@@ -6,6 +6,7 @@ import concurrent.futures
 import time
 from typing import List
 
+import httpx
 from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TimeElapsedColumn, TimeRemainingColumn
 
@@ -27,6 +28,8 @@ class DomainChecker(DomainCheckerPort):
         whois_fallback: bool = False,
         max_workers: int = 20,
         rdap_timeout: float = 10.0,
+        max_connections: int = 100,
+        max_keepalive_connections: int = 20,
     ) -> None:
         """
         Initialize domain checker.
@@ -36,12 +39,39 @@ class DomainChecker(DomainCheckerPort):
             whois_fallback: Use WHOIS as fallback if RDAP is uncertain
             max_workers: Maximum number of concurrent workers
             rdap_timeout: RDAP request timeout
+            max_connections: Maximum connections in pool
+            max_keepalive_connections: Maximum keepalive connections
         """
         self.prefer_rdap = prefer_rdap
         self.whois_fallback = whois_fallback
         self.max_workers = max_workers
-        self.rdap_client = RdapClient(timeout=rdap_timeout, max_retries=3)
+        # Check if HTTP/2 is available
+        try:
+            import h2  # noqa: F401
+            http2_enabled = True
+        except ImportError:
+            http2_enabled = False
+
+        # Create shared HTTP client with connection pooling for RDAP
+        self._http_client = httpx.Client(
+            timeout=rdap_timeout,
+            limits=httpx.Limits(
+                max_connections=max_connections,
+                max_keepalive_connections=max_keepalive_connections,
+            ),
+            http2=http2_enabled,  # Enable HTTP/2 only if h2 package is installed
+        )
+        self.rdap_client = RdapClient(
+            timeout=rdap_timeout,
+            max_retries=3,
+            http_client=self._http_client,
+        )
         self.whois_client = WhoisClient()
+
+    def __del__(self) -> None:
+        """Cleanup HTTP client on deletion."""
+        if hasattr(self, "_http_client"):
+            self._http_client.close()
 
     def check_domain(self, domain: str) -> DomainCheckResult:
         """

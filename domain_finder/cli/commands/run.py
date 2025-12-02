@@ -67,7 +67,11 @@ def _create_provider(
             temperature=temperature,
             timeout=timeout,
         )
-        return OpenAIProvider(config=config, settings=settings)
+        return OpenAIProvider(
+            config=config,
+            settings=settings,
+            max_concurrent_requests=settings.max_concurrent_llm_requests,
+        )
     else:
         raise typer.BadParameter("provider must be 'openai'")
 
@@ -136,6 +140,8 @@ def run(
         prefer_rdap=use_rdap,
         whois_fallback=whois_fallback,
         max_workers=max_workers,
+        max_connections=settings.max_connections,
+        max_keepalive_connections=settings.max_keepalive_connections,
     )
 
     # Create use case

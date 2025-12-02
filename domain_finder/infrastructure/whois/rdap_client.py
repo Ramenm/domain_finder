@@ -17,17 +17,24 @@ RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
 class RdapClient:
     """Client for RDAP (Registration Data Access Protocol) domain checking."""
 
-    def __init__(self, timeout: float = 10.0, max_retries: int = 3) -> None:
+    def __init__(
+        self,
+        timeout: float = 10.0,
+        max_retries: int = 3,
+        http_client: Optional[httpx.Client] = None,
+    ) -> None:
         """
         Initialize RDAP client.
 
         Args:
             timeout: Request timeout in seconds
             max_retries: Maximum number of retry attempts for retryable errors
+            http_client: Optional shared HTTP client (for connection pooling)
         """
         self.timeout = timeout
         self.max_retries = max_retries
         self.base_url = "https://rdap.org/domain"
+        self._http_client = http_client  # Shared client for connection pooling
 
     def _parse_json_safe(self, response: httpx.Response) -> Optional[dict]:
         """
@@ -121,8 +128,12 @@ class RdapClient:
 
         for attempt in range(1, self.max_retries + 1):
             try:
-                with httpx.Client(timeout=self.timeout, follow_redirects=True) as client:
-                    response = client.get(url)
+                # Use shared client if available, otherwise create temporary one
+                if self._http_client:
+                    response = self._http_client.get(url, follow_redirects=True)
+                else:
+                    with httpx.Client(timeout=self.timeout, follow_redirects=True) as client:
+                        response = client.get(url)
             except httpx.TimeoutException as e:
                 last_exc = e
                 if attempt == self.max_retries:
