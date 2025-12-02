@@ -40,7 +40,7 @@ class DomainChecker(DomainCheckerPort):
         self.prefer_rdap = prefer_rdap
         self.whois_fallback = whois_fallback
         self.max_workers = max_workers
-        self.rdap_client = RdapClient(timeout=rdap_timeout)
+        self.rdap_client = RdapClient(timeout=rdap_timeout, max_retries=3)
         self.whois_client = WhoisClient()
 
     def check_domain(self, domain: str) -> DomainCheckResult:

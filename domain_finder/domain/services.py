@@ -190,6 +190,9 @@ class DomainCheckService:
     ) -> dict[str, DomainCheckResult]:
         """
         Check domains with caching support.
+        
+        Important: Only caches successful results. Errors are not cached
+        to avoid marking domains as unavailable when check failed.
 
         Args:
             domains: List of domain names to check
@@ -210,12 +213,20 @@ class DomainCheckService:
 
         # Check uncached domains
         if domains_to_check:
-            fresh_results = self.checker.check_domains(domains_to_check)
-            results.update(fresh_results)
-
-            # Cache new results
-            for result in fresh_results.values():
-                self.repository.cache_result(result)
+            try:
+                fresh_results = self.checker.check_domains(domains_to_check)
+                
+                # Only cache successful results (not errors marked as unavailable)
+                for domain, result in fresh_results.items():
+                    results[domain] = result
+                    # Only cache if we got a definitive answer (not "unknown" source)
+                    # This avoids caching error states as "unavailable"
+                    if result.source != "unknown":
+                        self.repository.cache_result(result)
+            except Exception:  # noqa: BLE001
+                # If checker fails completely, don't cache anything
+                # Results will be empty, which is better than wrong cached data
+                pass
 
         return results
 

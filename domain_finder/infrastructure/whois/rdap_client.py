@@ -10,25 +10,102 @@ import httpx
 from domain_finder.domain.errors import DomainCheckError
 from domain_finder.domain.models import DomainCheckResult
 
+# Status codes that can be retried
+RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
+
 
 class RdapClient:
     """Client for RDAP (Registration Data Access Protocol) domain checking."""
 
-    def __init__(self, timeout: float = 10.0) -> None:
+    def __init__(self, timeout: float = 10.0, max_retries: int = 3) -> None:
         """
         Initialize RDAP client.
 
         Args:
             timeout: Request timeout in seconds
+            max_retries: Maximum number of retry attempts for retryable errors
         """
         self.timeout = timeout
+        self.max_retries = max_retries
         self.base_url = "https://rdap.org/domain"
+
+    def _parse_json_safe(self, response: httpx.Response) -> Optional[dict]:
+        """
+        Safely parse JSON from response.
+        
+        Args:
+            response: HTTP response
+            
+        Returns:
+            Parsed JSON dict or None if not JSON
+        """
+        content_type = (response.headers.get("content-type") or "").lower()
+        if "json" not in content_type:
+            return None
+        try:
+            data = response.json()
+            if isinstance(data, dict):
+                return data
+        except (ValueError, TypeError):
+            return None
+        return None
+
+    def _is_not_found_error(self, data: dict) -> bool:
+        """
+        Check if RDAP response indicates domain not found.
+        
+        Args:
+            data: Parsed JSON response
+            
+        Returns:
+            True if response indicates domain not found
+        """
+        # Check errorCode field
+        error_code = data.get("errorCode")
+        if isinstance(error_code, int) and error_code == 404:
+            return True
+
+        # Check title and detail fields
+        title = (data.get("title") or "").lower()
+        detail = (data.get("detail") or "").lower()
+        combined = f"{title} {detail}"
+        
+        not_found_indicators = [
+            "not found",
+            "object does not exist",
+            "domain not found",
+            "does not exist",
+        ]
+        return any(indicator in combined for indicator in not_found_indicators)
+
+    def _is_domain_object(self, data: dict, domain: str) -> bool:
+        """
+        Check if RDAP response contains a valid domain object.
+        
+        Args:
+            data: Parsed JSON response
+            domain: Domain name being checked
+            
+        Returns:
+            True if response contains valid domain object
+        """
+        if data.get("objectClassName") != "domain":
+            return False
+
+        # Check domain name matches
+        ldh_name = (data.get("ldhName") or data.get("unicodeName") or "").lower()
+        if ldh_name and ldh_name != domain.lower():
+            # Response for different domain - don't trust it
+            return False
+        
+        # Check for domain identifiers
+        return bool(data.get("handle") or data.get("ldhName") or data.get("unicodeName"))
 
     def check_domain(self, domain: str) -> DomainCheckResult:
         """
-        Check domain availability via RDAP.
+        Check domain availability via RDAP with retry logic.
 
-        RDAP: 404 -> available, 200 -> registered.
+        RDAP spec: 200 with domain object = registered, 404 with not found = available.
 
         Args:
             domain: Domain name to check (e.g., 'example.com')
@@ -37,57 +114,106 @@ class RdapClient:
             DomainCheckResult with availability status
 
         Raises:
-            DomainCheckError: If check fails
+            DomainCheckError: If check fails after retries
         """
         url = f"{self.base_url}/{domain}"
-        try:
-            with httpx.Client(timeout=self.timeout, follow_redirects=True) as client:
-                response = client.get(url)
-                
-                # RDAP logic: 404 means domain is available (not registered)
-                # 200 means domain is registered (not available)
-                # Other status codes need careful handling
-                if response.status_code == 404:
-                    available = True
-                elif response.status_code == 200:
-                    # 200 means domain is registered - check response to be sure
-                    try:
-                        data = response.json()
-                        # If we get valid JSON with domain info, it's registered
-                        if isinstance(data, dict) and (data.get("handle") or data.get("ldhName")):
-                            available = False
-                        else:
-                            # Empty or invalid response - treat as available (might be false positive)
-                            available = True
-                    except Exception:  # noqa: BLE001
-                        # Can't parse JSON - if 200 with content, likely registered
-                        # But if response is empty, might be available
-                        if response.text and len(response.text.strip()) > 0:
-                            available = False
-                        else:
-                            # Empty response on 200 - unusual, treat as available
-                            available = True
-                elif response.status_code in (429, 503, 502, 504):
-                    # Rate limit or service unavailable - raise error to retry
-                    raise DomainCheckError(
-                        f"RDAP service unavailable (status {response.status_code}) for domain {domain}"
-                    )
-                else:
-                    # Unknown status - be conservative and mark as unavailable
-                    # to avoid false positives
-                    available = False
+        last_exc: Optional[Exception] = None
 
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                with httpx.Client(timeout=self.timeout, follow_redirects=True) as client:
+                    response = client.get(url)
+            except httpx.TimeoutException as e:
+                last_exc = e
+                if attempt == self.max_retries:
+                    raise DomainCheckError(
+                        f"Превышено время ожидания ответа от RDAP для домена {domain}"
+                    ) from e
+                # Exponential backoff
+                time.sleep(0.2 * (2 ** (attempt - 1)))
+                continue
+            except httpx.HTTPError as e:
+                last_exc = e
+                if attempt == self.max_retries:
+                    raise DomainCheckError(
+                        f"HTTP ошибка при запросе RDAP для домена {domain}: {e}"
+                    ) from e
+                time.sleep(0.2 * (2 ** (attempt - 1)))
+                continue
+
+            data = self._parse_json_safe(response)
+            status = response.status_code
+
+            try:
+                # 2xx: Domain object found (registered)
+                if 200 <= status < 300:
+                    if data is None:
+                        # 200 without JSON - very unusual, can't determine
+                        raise DomainCheckError(
+                            f"RDAP вернул {status} без JSON для домена {domain}"
+                        )
+
+                    if self._is_domain_object(data, domain):
+                        # Valid domain object found - domain is registered
+                        available = False
+                    elif self._is_not_found_error(data):
+                        # Error response in 2xx (unusual but possible)
+                        available = True
+                    else:
+                        # Can't interpret response
+                        raise DomainCheckError(
+                            f"Неожиданный формат RDAP ответа для домена {domain}"
+                        )
+
+                # 404: Either "not found" or rdap.org has no service for this TLD
+                elif status == 404:
+                    if data is not None and self._is_not_found_error(data):
+                        # RDAP "not found" error - domain is available
+                        available = True
+                    else:
+                        # 404 from rdap.org itself (no RDAP server for TLD)
+                        raise DomainCheckError(
+                            f"RDAP сервис для домена {domain} не найден (TLD без RDAP?)"
+                        )
+
+                # Retryable errors
+                elif status in RETRYABLE_STATUSES:
+                    if attempt == self.max_retries:
+                        raise DomainCheckError(
+                            f"RDAP временно недоступен (status {status}) для домена {domain}"
+                        )
+                    # Respect Retry-After header if present
+                    retry_after = response.headers.get("Retry-After")
+                    delay = 0.2 * (2 ** (attempt - 1))
+                    if retry_after and retry_after.isdigit():
+                        delay = max(delay, float(retry_after))
+                    time.sleep(delay)
+                    continue
+
+                # Other 4xx/5xx: Error, can't determine availability
+                else:
+                    raise DomainCheckError(
+                        f"Неожиданный HTTP статус от RDAP ({status}) для домена {domain}"
+                    )
+
+                # Successfully determined availability
                 return DomainCheckResult(
                     domain=domain,
                     available=available,
                     source="rdap",
                     checked_at=time.time(),
                 )
-        except httpx.TimeoutException:
-            raise DomainCheckError(f"Превышено время ожидания ответа от RDAP для домена {domain}")
-        except DomainCheckError:
-            # Re-raise domain check errors
-            raise
-        except Exception as e:  # noqa: BLE001
-            raise DomainCheckError(f"Ошибка при проверке домена {domain} через RDAP: {e}")
+
+            except DomainCheckError as e:
+                last_exc = e
+                # For logical errors, retry usually won't help, but try anyway
+                if attempt == self.max_retries:
+                    raise
+                time.sleep(0.2 * (2 ** (attempt - 1)))
+                continue
+
+        # Should not reach here
+        raise DomainCheckError(
+            f"Ошибка при проверке домена {domain} через RDAP: {last_exc}"
+        ) from last_exc
 
