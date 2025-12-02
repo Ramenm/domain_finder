@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import time
-from typing import List
+from typing import List, Optional
 
 import concurrent.futures
 
@@ -71,61 +71,138 @@ class RunDomainSearchUseCase:
             max_len=request.max_len,
         )
 
-        # Run iterations
-        for iteration in range(1, request.iterations + 1):
-            # Generate domains (with parallel LLM requests if needed)
-            try:
-                candidates = self._generate_domains_parallel(
-                    search_params,
-                    workers=request.llm_workers,
-                )
-            except ProviderError:
-                # Skip iteration on provider error
-                time.sleep(request.cooldown)
-                continue
+        # Pipeline: generate next batch while checking current batch
+        # Use ThreadPoolExecutor to overlap generation and checking
+        max_pool_workers = max(2, request.llm_workers + 1)  # At least 2: one for gen, one for check
 
-            # Filter out already seen domains
-            seen = set(all_suggested)
-            if isinstance(self.repository, CacheManager):
-                seen.update(self.repository.known().keys())
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_pool_workers) as pipeline_pool:
+            # Start first generation ahead of time
+            gen_future: Optional[concurrent.futures.Future] = None
 
-            new_candidates = [c for c in candidates if c.name not in seen]
+            for iteration in range(1, request.iterations + 1):
+                # Wait for current generation to complete (if any)
+                if gen_future is not None:
+                    try:
+                        candidates = gen_future.result()
+                    except ProviderError:
+                        # Skip iteration on provider error
+                        if iteration < request.iterations:
+                            # Start next generation anyway
+                            gen_future = pipeline_pool.submit(
+                                self._generate_domains_parallel,
+                                search_params,
+                                request.llm_workers,
+                            )
+                        time.sleep(request.cooldown)
+                        continue
+                else:
+                    # First iteration - generate synchronously
+                    try:
+                        candidates = self._generate_domains_parallel(
+                            search_params,
+                            workers=request.llm_workers,
+                        )
+                    except ProviderError:
+                        time.sleep(request.cooldown)
+                        continue
 
-            if not new_candidates:
-                time.sleep(request.cooldown)
-                continue
-
-            # Check availability or skip
-            if request.skip_check:
-                # Just save without checking
-                for candidate in new_candidates:
-                    self.writer.append_available([(candidate.name, "skipped", time.time())])
-                all_available.extend([c.name for c in new_candidates])
-                all_suggested.extend([c.name for c in new_candidates])
-            else:
-                # Check domains
-                domain_names = [c.name for c in new_candidates]
-                results = self.check_service.check_domains_with_cache(domain_names)
-
-                # Save cache
+                # Filter out already seen domains
+                seen = set(all_suggested)
                 if isinstance(self.repository, CacheManager):
-                    self.repository.save()
+                    seen.update(self.repository.known().keys())
 
-                # Collect available domains
-                newly_available: List[str] = []
-                to_write = []
-                for domain, result in results.items():
-                    if result.available:
-                        newly_available.append(domain)
-                        to_write.append((domain, result.source, result.checked_at))
+                new_candidates = [c for c in candidates if c.name not in seen]
 
-                if newly_available:
-                    self.writer.append_available(to_write)
-                    all_available.extend(newly_available)
+                if not new_candidates:
+                    # Start next generation if not last iteration
+                    if iteration < request.iterations:
+                        gen_future = pipeline_pool.submit(
+                            self._generate_domains_parallel,
+                            search_params,
+                            request.llm_workers,
+                        )
+                    time.sleep(request.cooldown)
+                    continue
 
-                all_suggested.extend(domain_names)
+                # Start next generation IMMEDIATELY (while we check current batch)
+                if iteration < request.iterations:
+                    gen_future = pipeline_pool.submit(
+                        self._generate_domains_parallel,
+                        search_params,
+                        request.llm_workers,
+                    )
 
-            time.sleep(request.cooldown)
+                # Check availability or skip
+                if request.skip_check:
+                    # Just save without checking
+                    for candidate in new_candidates:
+                        self.writer.append_available([(candidate.name, "skipped", time.time())])
+                    all_available.extend([c.name for c in new_candidates])
+                    all_suggested.extend([c.name for c in new_candidates])
+                else:
+                    # Check domains - this runs in parallel with next generation
+                    domain_names = [c.name for c in new_candidates]
+                    check_future = pipeline_pool.submit(
+                        self.check_service.check_domains_with_cache,
+                        domain_names,
+                    )
+
+                    # While checking, next generation is already running
+                    try:
+                        results = check_future.result()
+                    except Exception as e:  # noqa: BLE001
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.error(f"Error checking domains in iteration {iteration}: {e}")
+                        results = {}
+
+                    # Save cache
+                    if isinstance(self.repository, CacheManager):
+                        self.repository.save()
+
+                    # Collect available domains
+                    newly_available: List[str] = []
+                    to_write = []
+                    checked_count = 0
+                    available_count = 0
+                    
+                    # Debug: log what we got
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.debug(
+                        f"Iteration {iteration}: checking {len(domain_names)} domains, "
+                        f"got {len(results)} results"
+                    )
+                    
+                    for domain, result in results.items():
+                        checked_count += 1
+                        if result.available:
+                            available_count += 1
+                            newly_available.append(domain)
+                            to_write.append((domain, result.source, result.checked_at))
+                        else:
+                            logger.debug(
+                                f"Domain {domain} is unavailable (source: {result.source})"
+                            )
+
+                    # Debug: log statistics for this iteration
+                    if checked_count > 0:
+                        logger.info(
+                            f"Iteration {iteration}: checked {checked_count} domains, "
+                            f"found {available_count} available"
+                        )
+                    elif domain_names:
+                        logger.warning(
+                            f"Iteration {iteration}: no results returned for {len(domain_names)} domains"
+                        )
+
+                    if newly_available:
+                        self.writer.append_available(to_write)
+                        all_available.extend(newly_available)
+
+                    all_suggested.extend(domain_names)
+
+                time.sleep(request.cooldown)
 
         # Return result
         return DomainSearchResult(

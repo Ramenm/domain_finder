@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Callable, Iterator, Optional
+from urllib.parse import urlparse
 
 from domain_finder.domain.errors import ProviderError
 from domain_finder.domain.models import ProviderConfig
@@ -19,6 +20,7 @@ class OpenAIProvider(BaseLLMProvider):
         config: Optional[ProviderConfig] = None,
         settings: Optional[Settings] = None,
         http_client: Optional[HttpClient] = None,
+        max_concurrent_requests: Optional[int] = None,
     ) -> None:
         """
         Initialize OpenAI-compatible provider.
@@ -27,6 +29,7 @@ class OpenAIProvider(BaseLLMProvider):
             config: Provider configuration (uses defaults if not provided)
             settings: Application settings (for API key and base URL)
             http_client: Optional HTTP client
+            max_concurrent_requests: Maximum concurrent LLM requests (uses settings default if not provided)
 
         Raises:
             ProviderError: If API key is missing
@@ -37,8 +40,8 @@ class OpenAIProvider(BaseLLMProvider):
         api_key = settings.get_api_key("openai")
         if not api_key:
             raise ProviderError(
-                "OPENAI_API_KEY not found in environment. "
-                "Please set it in .env file or environment variables."
+                "OPENAI_API_KEY не найден в переменных окружения. "
+                "Установите его в файле .env или в переменных окружения."
             )
 
         if config is None:
@@ -55,10 +58,64 @@ class OpenAIProvider(BaseLLMProvider):
             if not config.api_key:
                 config.api_key = api_key
 
-        super().__init__(config, http_client)
+        max_concurrent = max_concurrent_requests or settings.max_concurrent_llm_requests
+        super().__init__(config, http_client, max_concurrent_requests=max_concurrent)
         base_url = settings.get_openai_base_url()
         self.base_url = base_url.rstrip("/")
         self.url = f"{self.base_url}/chat/completions"
+        self._display_name = self._get_display_name(base_url)
+
+    def _get_display_name(self, base_url: str) -> str:
+        """
+        Get display name for provider based on base URL.
+        
+        Args:
+            base_url: Base URL of the API endpoint
+            
+        Returns:
+            Display name for the provider
+        """
+        base_url_lower = base_url.lower()
+        
+        # Check for known providers by URL pattern
+        if "api.openai.com" in base_url_lower:
+            return "OpenAI"
+        elif "openai" in base_url_lower:
+            return "OpenAI (custom)"
+        elif "anthropic" in base_url_lower or "claude" in base_url_lower:
+            return "Anthropic"
+        elif "google" in base_url_lower or "gemini" in base_url_lower:
+            return "Google"
+        elif "mistral" in base_url_lower:
+            return "Mistral"
+        elif "groq" in base_url_lower:
+            return "Groq"
+        elif "together" in base_url_lower:
+            return "Together AI"
+        elif "deepseek" in base_url_lower:
+            return "DeepSeek"
+        else:
+            # Extract domain from URL for custom providers
+            try:
+                parsed = urlparse(base_url)
+                domain = parsed.netloc or parsed.path.split("/")[0]
+                if domain:
+                    # Remove port if present
+                    domain = domain.split(":")[0]
+                    # Get main domain part
+                    parts = domain.split(".")
+                    if len(parts) >= 2:
+                        main_domain = parts[-2]  # e.g., "example" from "api.example.com"
+                        return main_domain.capitalize()
+                    return domain.capitalize()
+            except Exception:  # noqa: BLE001
+                pass
+            return "Custom Provider"
+
+    @property
+    def display_name(self) -> str:
+        """Get display name for this provider."""
+        return self._display_name
 
     def _generate_with_prompt(self, prompt: str) -> str:
         """
@@ -84,10 +141,68 @@ class OpenAIProvider(BaseLLMProvider):
         }
 
         try:
-            data = self._http_client.post(self.url, headers, payload)
-            return data["choices"][0]["message"]["content"]
+            # Acquire semaphore to limit concurrent requests
+            self._acquire_semaphore()
+            try:
+                data = self._http_client.post(self.url, headers, payload)
+                return data["choices"][0]["message"]["content"]
+            finally:
+                self._release_semaphore()
         except KeyError as e:
-            raise ProviderError(f"Unexpected OpenAI response format: {e}; data={data!r}")
+            raise ProviderError(f"Неожиданный формат ответа от OpenAI API: {e}; data={data!r}")
         except Exception as e:  # noqa: BLE001
-            raise ProviderError(f"OpenAI API error: {e}")
+            raise ProviderError(f"Ошибка при обращении к OpenAI API: {e}")
+
+    def _generate_with_prompt_stream(
+        self,
+        prompt: str,
+        on_chunk: Optional[Callable[[str], None]] = None,
+    ) -> str:
+        """
+        Generate response from OpenAI-compatible API with streaming.
+
+        Args:
+            prompt: Prompt text
+            on_chunk: Optional callback for each chunk
+
+        Returns:
+            Complete text response from LLM
+
+        Raises:
+            ProviderError: If generation fails
+        """
+        headers = {
+            "Authorization": f"Bearer {self.config.api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": self.config.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": self.config.temperature,
+        }
+
+        try:
+            # Acquire semaphore to limit concurrent requests
+            self._acquire_semaphore()
+            try:
+                parts = []
+                for chunk in self._http_client.post_stream(self.url, headers, payload):
+                    # OpenAI-compatible format: {"choices": [{"delta": {"content": "..."}}]}
+                    try:
+                        choice = chunk.get("choices", [{}])[0]
+                        delta = choice.get("delta", {})
+                        content = delta.get("content", "")
+                        if content:
+                            parts.append(content)
+                            if on_chunk:
+                                on_chunk(content)
+                    except (KeyError, IndexError):
+                        # Skip malformed chunks
+                        continue
+
+                return "".join(parts)
+            finally:
+                self._release_semaphore()
+        except Exception as e:  # noqa: BLE001
+            raise ProviderError(f"Ошибка при стриминге из OpenAI API: {e}")
 

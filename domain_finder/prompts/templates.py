@@ -31,34 +31,34 @@ def build_prompt(
     if lang.startswith("ru"):
         header = (
             "Сгенерируй список уникальных, коротких и запоминающихся доменных имён "
-            f"(только второй уровень) на тематику: {topic!r}. "
+            f"второго уровня на тематику: {topic!r}. "
         )
         rules = (
-            f"- Количество: {count}.\n"
-            f"- Допустимые зоны: {tlds_str}.\n"
-            f"- Длина второй части (до точки): от {min_len} до {max_len} символов.\n"
-            "- Пиши только домены, каждый на новой строке или через запятую.\n"
-            "- Никаких пояснений, предисловий и постскриптумов.\n"
-            "- Не используй подчёркивания, пробелы, эмодзи и не начинай/не заканчивай дефисом.\n"
-            "- Разрешены только латинские буквы и цифры, дефис внутри.\n"
-            "- Не добавляй поддомены (только один '.' в домене).\n"
+            f"- Количество доменов: {count}.\n"
+            f"- Допустимые доменные зоны: {tlds_str}.\n"
+            f"- Длина второй части домена (без TLD): от {min_len} до {max_len} символов.\n"
+            "- Выводи только домены, каждый на новой строке или через запятую.\n"
+            "- Без пояснений, предисловий и дополнительного текста.\n"
+            "- Не используй подчёркивания, пробелы, эмодзи; не начинай и не заканчивай дефисом.\n"
+            "- Разрешены только латинские буквы и цифры; дефис допустим только внутри имени.\n"
+            "- Не добавляй поддомены (в домене должен быть ровно один символ '.').\n"
         )
-        footer = "Верни только домены без дополнительного текста."
+        footer = "Верни только список доменов без дополнительного текста."
     else:
         header = (
-            "Generate a list of unique, short, memorable second-level domain names "
+            "Generate a list of unique, short, and memorable second-level domain names "
             f"for the topic: {topic!r}. "
         )
         rules = (
-            f"- Amount: {count}.\n"
+            f"- Number of domains: {count}.\n"
             f"- Allowed TLDs: {tlds_str}.\n"
-            f"- Length of the second-level label: {min_len} to {max_len} chars.\n"
+            f"- Length of the second-level label (without TLD): {min_len} to {max_len} characters.\n"
             "- Output only domains, one per line or comma-separated.\n"
-            "- No explanations or extra text.\n"
-            "- Use only ASCII letters and digits; hyphen allowed inside, not at the ends.\n"
-            "- Exactly one dot (no subdomains).\n"
+            "- No explanations, introductions, or additional text.\n"
+            "- Use only ASCII letters and digits; hyphen allowed only inside the label, not at the ends.\n"
+            "- Exactly one dot in the domain (no subdomains).\n"
         )
-        footer = "Return domains only, without any extra text."
+        footer = "Return only the list of domains without any additional text."
 
     return f"{header}\n{rules}\n{footer}"
 

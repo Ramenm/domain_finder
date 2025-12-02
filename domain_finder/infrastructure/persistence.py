@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
 
+from rich import box
 from rich.console import Console
 from rich.table import Table
 
@@ -74,9 +75,9 @@ class ResultWriter:
         Args:
             available: List of available domain names
         """
-        table = Table(title="Available Domains", show_lines=True)
-        table.add_column("#", justify="right")
-        table.add_column("Domain", justify="left")
+        table = Table(title="Найденные доступные домены", show_lines=True, box=box.ROUNDED)
+        table.add_column("#", justify="right", style="cyan")
+        table.add_column("Домен", justify="left", style="green")
         for i, domain in enumerate(available, start=1):
             table.add_row(str(i), domain)
         console.print(table)

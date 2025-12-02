@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import time
 from typing import List, Optional
 
 from .errors import ValidationError
@@ -190,6 +191,9 @@ class DomainCheckService:
     ) -> dict[str, DomainCheckResult]:
         """
         Check domains with caching support.
+        
+        Important: Only caches successful results. Errors are not cached
+        to avoid marking domains as unavailable when check failed.
 
         Args:
             domains: List of domain names to check
@@ -210,12 +214,31 @@ class DomainCheckService:
 
         # Check uncached domains
         if domains_to_check:
-            fresh_results = self.checker.check_domains(domains_to_check)
-            results.update(fresh_results)
-
-            # Cache new results
-            for result in fresh_results.values():
-                self.repository.cache_result(result)
+            try:
+                fresh_results = self.checker.check_domains(domains_to_check)
+                
+                # Only cache successful results (not errors marked as unavailable)
+                for domain, result in fresh_results.items():
+                    results[domain] = result
+                    # Only cache if we got a definitive answer (not "unknown" source)
+                    # This avoids caching error states as "unavailable"
+                    if result.source != "unknown":
+                        self.repository.cache_result(result)
+            except Exception as e:  # noqa: BLE001
+                # If checker fails completely, mark all as unavailable to avoid false positives
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Domain checker failed completely: {e}")
+                # Mark all unchecked domains as unavailable (conservative approach)
+                for domain in domains_to_check:
+                    if domain not in results:
+                        from domain_finder.domain.models import DomainCheckResult
+                        results[domain] = DomainCheckResult(
+                            domain=domain,
+                            available=False,
+                            source="unknown",
+                            checked_at=time.time(),
+                        )
 
         return results
 

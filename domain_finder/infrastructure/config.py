@@ -35,11 +35,17 @@ class Settings(BaseSettings):
     # HTTP settings
     http_timeout: float = Field(default=60.0, alias="HTTP_TIMEOUT")
     rdap_timeout: float = Field(default=10.0, alias="RDAP_TIMEOUT")
+    max_connections: int = Field(default=100, alias="MAX_CONNECTIONS")
+    max_keepalive_connections: int = Field(default=20, alias="MAX_KEEPALIVE_CONNECTIONS")
 
     # Retry settings
     max_retries: int = Field(default=3, alias="MAX_RETRIES")
     retry_backoff_min: float = Field(default=1.0, alias="RETRY_BACKOFF_MIN")
     retry_backoff_max: float = Field(default=3.0, alias="RETRY_BACKOFF_MAX")
+
+    # LLM concurrency settings
+    max_concurrent_llm_requests: int = Field(default=8, alias="MAX_CONCURRENT_LLM_REQUESTS")
+    enable_streaming: bool = Field(default=False, alias="ENABLE_STREAMING")
 
     def get_api_key(self, provider: str) -> Optional[str]:
         """Get API key for the specified provider."""
