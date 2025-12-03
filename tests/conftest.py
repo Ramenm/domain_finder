@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import pytest
-from typing import Any
 from unittest.mock import Mock
+
+import pytest
 
 
 @pytest.fixture
@@ -23,4 +23,3 @@ def mock_llm_provider() -> Mock:
 def mock_domain_checker() -> Mock:
     """Mock domain checker for testing."""
     return Mock()
-

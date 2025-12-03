@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional
 
 from pydantic import BaseModel
 
@@ -16,10 +15,9 @@ class DomainSearchRequest:
     iterations: int = 5
     per_request: int = 100
     llm_workers: int = 1
-    tlds: List[str] = None  # type: ignore
-    language: str = "ru"
+    tlds: list[str] = None  # type: ignore
     provider: str = "openai"
-    model: Optional[str] = None
+    model: str | None = None
     temperature: float = 0.7
     timeout: float = 60.0
     use_rdap: bool = True
@@ -31,7 +29,7 @@ class DomainSearchRequest:
     cache_file: str = "domains_cache.json"
     clear_cache: bool = False
     results_txt: str = "results.txt"
-    results_csv: Optional[str] = "results.csv"
+    results_csv: str | None = "results.csv"
     skip_check: bool = False
 
     def __post_init__(self) -> None:
@@ -46,7 +44,6 @@ class DomainSearchResult(BaseModel):
     total_iterations: int
     total_generated: int
     total_available: int
-    available_domains: List[str]
+    available_domains: list[str]
     results_txt: str
-    results_csv: Optional[str] = None
-
+    results_csv: str | None = None

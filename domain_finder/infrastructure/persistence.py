@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable, List, Optional, Tuple
 
 from rich import box
 from rich.console import Console
@@ -20,7 +20,7 @@ class ResultWriter:
     def __init__(
         self,
         txt_path: str = "results.txt",
-        csv_path: Optional[str] = "results.csv",
+        csv_path: str | None = "results.csv",
     ) -> None:
         """
         Initialize result writer.
@@ -38,7 +38,7 @@ class ResultWriter:
         if self.csv_path and not self.csv_path.exists():
             self.csv_path.write_text("domain,available,source,checked_at\n", encoding="utf-8")
 
-    def append_available(self, domain_records: Iterable[Tuple[str, str, float]]) -> None:
+    def append_available(self, domain_records: Iterable[tuple[str, str, float]]) -> None:
         """
         Append available domains to output files.
 
@@ -46,7 +46,7 @@ class ResultWriter:
             domain_records: Iterable of tuples (domain, source, checked_at)
         """
         with self.txt_path.open("a", encoding="utf-8") as f_txt:
-            for domain, source, ts in domain_records:
+            for domain, _source, _ts in domain_records:
                 f_txt.write(f"{domain}\n")
 
         if self.csv_path:
@@ -54,31 +54,28 @@ class ResultWriter:
                 for domain, source, ts in domain_records:
                     f_csv.write(f"{domain},true,{source},{int(ts)}\n")
 
-    def append_results(self, results: List[DomainCheckResult]) -> None:
+    def append_results(self, results: list[DomainCheckResult]) -> None:
         """
         Append domain check results to output files.
 
         Args:
             results: List of domain check results
         """
-        available_records = [
-            (r.domain, r.source, r.checked_at) for r in results if r.available
-        ]
+        available_records = [(r.domain, r.source, r.checked_at) for r in results if r.available]
         if available_records:
             self.append_available(available_records)
 
     @staticmethod
-    def show_table(available: List[str]) -> None:
+    def show_table(available: list[str]) -> None:
         """
         Display available domains in a formatted table.
 
         Args:
             available: List of available domain names
         """
-        table = Table(title="Найденные доступные домены", show_lines=True, box=box.ROUNDED)
+        table = Table(title="Found Available Domains", show_lines=True, box=box.ROUNDED)
         table.add_column("#", justify="right", style="cyan")
-        table.add_column("Домен", justify="left", style="green")
+        table.add_column("Domain", justify="left", style="green")
         for i, domain in enumerate(available, start=1):
             table.add_row(str(i), domain)
         console.print(table)
-

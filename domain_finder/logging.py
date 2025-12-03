@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import sys
-from typing import Optional
 
 from rich.console import Console
 from rich.logging import RichHandler
@@ -12,7 +11,7 @@ from rich.logging import RichHandler
 
 def setup_logging(
     level: str | int = logging.INFO,
-    console: Optional[Console] = None,
+    console: Console | None = None,
     enable_rich: bool = True,
 ) -> logging.Logger:
     """
@@ -64,4 +63,3 @@ def setup_logging(
 def get_logger(name: str) -> logging.Logger:
     """Get a logger instance for the given name."""
     return logging.getLogger(name)
-

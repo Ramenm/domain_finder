@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import List, Optional
 
-from .models import DomainCandidate, DomainCheckResult, DomainSearchParams
+from .models import DomainCheckResult, DomainSearchParams
 
 
 class DomainProviderPort(ABC):
@@ -48,7 +47,7 @@ class DomainCheckerPort(ABC):
         pass
 
     @abstractmethod
-    def check_domains(self, domains: List[str]) -> dict[str, DomainCheckResult]:
+    def check_domains(self, domains: list[str]) -> dict[str, DomainCheckResult]:
         """
         Check multiple domains concurrently.
 
@@ -68,7 +67,7 @@ class ResultRepositoryPort(ABC):
     """Port for persisting domain search results."""
 
     @abstractmethod
-    def save_available_domains(self, domains: List[DomainCheckResult]) -> None:
+    def save_available_domains(self, domains: list[DomainCheckResult]) -> None:
         """
         Save available domains to persistent storage.
 
@@ -78,7 +77,7 @@ class ResultRepositoryPort(ABC):
         pass
 
     @abstractmethod
-    def get_cached_result(self, domain: str) -> Optional[DomainCheckResult]:
+    def get_cached_result(self, domain: str) -> DomainCheckResult | None:
         """
         Get cached check result for a domain.
 
@@ -99,4 +98,3 @@ class ResultRepositoryPort(ABC):
             result: Domain check result to cache
         """
         pass
-

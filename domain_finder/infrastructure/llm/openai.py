@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Callable, Iterator, Optional
+from collections.abc import Callable
 from urllib.parse import urlparse
 
 from domain_finder.domain.errors import ProviderError
@@ -17,10 +17,10 @@ class OpenAIProvider(BaseLLMProvider):
 
     def __init__(
         self,
-        config: Optional[ProviderConfig] = None,
-        settings: Optional[Settings] = None,
-        http_client: Optional[HttpClient] = None,
-        max_concurrent_requests: Optional[int] = None,
+        config: ProviderConfig | None = None,
+        settings: Settings | None = None,
+        http_client: HttpClient | None = None,
+        max_concurrent_requests: int | None = None,
     ) -> None:
         """
         Initialize OpenAI-compatible provider.
@@ -40,8 +40,8 @@ class OpenAIProvider(BaseLLMProvider):
         api_key = settings.get_api_key("openai")
         if not api_key:
             raise ProviderError(
-                "OPENAI_API_KEY не найден в переменных окружения. "
-                "Установите его в файле .env или в переменных окружения."
+                "OPENAI_API_KEY not found in environment variables. "
+                "Set it in .env file or environment variables."
             )
 
         if config is None:
@@ -68,15 +68,15 @@ class OpenAIProvider(BaseLLMProvider):
     def _get_display_name(self, base_url: str) -> str:
         """
         Get display name for provider based on base URL.
-        
+
         Args:
             base_url: Base URL of the API endpoint
-            
+
         Returns:
             Display name for the provider
         """
         base_url_lower = base_url.lower()
-        
+
         # Check for known providers by URL pattern
         if "api.openai.com" in base_url_lower:
             return "OpenAI"
@@ -145,18 +145,20 @@ class OpenAIProvider(BaseLLMProvider):
             self._acquire_semaphore()
             try:
                 data = self._http_client.post(self.url, headers, payload)
-                return data["choices"][0]["message"]["content"]
+                return data["choices"][0]["message"]["content"]  # type: ignore[no-any-return]
             finally:
                 self._release_semaphore()
         except KeyError as e:
-            raise ProviderError(f"Неожиданный формат ответа от OpenAI API: {e}; data={data!r}")
+            raise ProviderError(
+                f"Unexpected response format from OpenAI API: {e}; data={data!r}"
+            ) from e
         except Exception as e:  # noqa: BLE001
-            raise ProviderError(f"Ошибка при обращении к OpenAI API: {e}")
+            raise ProviderError(f"Error calling OpenAI API: {e}") from e
 
     def _generate_with_prompt_stream(
         self,
         prompt: str,
-        on_chunk: Optional[Callable[[str], None]] = None,
+        on_chunk: Callable[[str], None] | None = None,
     ) -> str:
         """
         Generate response from OpenAI-compatible API with streaming.
@@ -204,5 +206,4 @@ class OpenAIProvider(BaseLLMProvider):
             finally:
                 self._release_semaphore()
         except Exception as e:  # noqa: BLE001
-            raise ProviderError(f"Ошибка при стриминге из OpenAI API: {e}")
-
+            raise ProviderError(f"Error streaming from OpenAI API: {e}") from e

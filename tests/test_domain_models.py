@@ -2,7 +2,12 @@
 
 import pytest
 
-from domain_finder.domain.models import DomainCandidate, DomainCheckResult, ProviderConfig, DomainSearchParams
+from domain_finder.domain.models import (
+    DomainCandidate,
+    DomainCheckResult,
+    DomainSearchParams,
+    ProviderConfig,
+)
 
 
 def test_domain_candidate_from_string():
@@ -63,22 +68,12 @@ def test_domain_search_params():
         topic="AI tools",
         tlds=["com", "io"],
         count=100,
-        language="en",
         min_len=4,
         max_len=15,
     )
     assert params.topic == "AI tools"
     assert params.tlds == ["com", "io"]
     assert params.count == 100
-
-    # Invalid language
-    with pytest.raises(ValueError):
-        DomainSearchParams(
-            topic="test",
-            tlds=["com"],
-            count=10,
-            language="invalid",
-        )
 
     # Invalid max_len < min_len
     with pytest.raises(ValueError):
@@ -89,4 +84,3 @@ def test_domain_search_params():
             min_len=10,
             max_len=5,
         )
-

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -58,9 +57,11 @@ class ProviderConfig(BaseModel):
 
     provider: str = Field(..., description="Provider name: 'openai'")
     model: str = Field(..., description="Model identifier")
-    temperature: float = Field(default=0.7, ge=0.0, le=2.0, description="Temperature for generation")
+    temperature: float = Field(
+        default=0.7, ge=0.0, le=2.0, description="Temperature for generation"
+    )
     timeout: float = Field(default=60.0, gt=0.0, description="Request timeout in seconds")
-    api_key: Optional[str] = Field(default=None, description="API key for the provider")
+    api_key: str | None = Field(default=None, description="API key for the provider")
 
     @field_validator("provider")
     @classmethod
@@ -78,18 +79,8 @@ class DomainSearchParams(BaseModel):
     topic: str = Field(..., description="Topic/theme for domain generation")
     tlds: list[str] = Field(..., min_length=1, description="List of allowed TLDs")
     count: int = Field(..., ge=1, le=300, description="Number of domains to generate")
-    language: str = Field(default="ru", description="Language for prompts: 'ru' or 'en'")
     min_len: int = Field(default=4, ge=1, le=63, description="Minimum label length")
     max_len: int = Field(default=15, ge=1, le=63, description="Maximum label length")
-
-    @field_validator("language")
-    @classmethod
-    def validate_language(cls, v: str) -> str:
-        """Validate language code."""
-        v = v.lower().strip()
-        if v not in ("ru", "en"):
-            raise ValueError("Language must be 'ru' or 'en'")
-        return v
 
     @field_validator("max_len")
     @classmethod
@@ -107,4 +98,3 @@ class CacheEntry:
     available: bool
     source: str
     checked_at: float
-

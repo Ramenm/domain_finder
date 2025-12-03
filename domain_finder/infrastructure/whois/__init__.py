@@ -1,2 +1,1 @@
 """Domain availability checking implementations."""
-
