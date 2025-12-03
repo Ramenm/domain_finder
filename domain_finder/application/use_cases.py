@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import math
 import time
-from typing import List, Optional
-
-import concurrent.futures
 
 from domain_finder.application.dto import DomainSearchRequest, DomainSearchResult
 from domain_finder.domain.errors import ProviderError
-from domain_finder.domain.models import DomainCandidate, DomainSearchParams, ProviderConfig
+from domain_finder.domain.models import DomainCandidate, DomainSearchParams
 from domain_finder.domain.ports import DomainCheckerPort, DomainProviderPort, ResultRepositoryPort
 from domain_finder.domain.services import DomainCheckService, DomainGeneratorService
 from domain_finder.infrastructure.cache import CacheManager
@@ -58,15 +56,14 @@ class RunDomainSearchUseCase:
             self.repository.clear()
 
         # Global containers
-        all_suggested: List[str] = []
-        all_available: List[str] = []
+        all_suggested: list[str] = []
+        all_available: list[str] = []
 
         # Create search params
         search_params = DomainSearchParams(
             topic=request.topic,
             tlds=[t.lstrip(".").lower() for t in request.tlds],
             count=request.per_request,
-            language=request.language,
             min_len=request.min_len,
             max_len=request.max_len,
         )
@@ -77,7 +74,7 @@ class RunDomainSearchUseCase:
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_pool_workers) as pipeline_pool:
             # Start first generation ahead of time
-            gen_future: Optional[concurrent.futures.Future] = None
+            gen_future: concurrent.futures.Future | None = None
 
             for iteration in range(1, request.iterations + 1):
                 # Wait for current generation to complete (if any)
@@ -152,6 +149,7 @@ class RunDomainSearchUseCase:
                         results = check_future.result()
                     except Exception as e:  # noqa: BLE001
                         import logging
+
                         logger = logging.getLogger(__name__)
                         logger.error(f"Error checking domains in iteration {iteration}: {e}")
                         results = {}
@@ -161,19 +159,20 @@ class RunDomainSearchUseCase:
                         self.repository.save()
 
                     # Collect available domains
-                    newly_available: List[str] = []
+                    newly_available: list[str] = []
                     to_write = []
                     checked_count = 0
                     available_count = 0
-                    
+
                     # Debug: log what we got
                     import logging
+
                     logger = logging.getLogger(__name__)
                     logger.debug(
                         f"Iteration {iteration}: checking {len(domain_names)} domains, "
                         f"got {len(results)} results"
                     )
-                    
+
                     for domain, result in results.items():
                         checked_count += 1
                         if result.available:
@@ -218,7 +217,7 @@ class RunDomainSearchUseCase:
         self,
         params: DomainSearchParams,
         workers: int = 1,
-    ) -> List[DomainCandidate]:
+    ) -> list[DomainCandidate]:
         """
         Generate domains with parallel LLM requests.
 
@@ -234,7 +233,7 @@ class RunDomainSearchUseCase:
 
         # Split count across workers
         per_call = max(1, math.ceil(params.count / workers))
-        all_candidates: List[DomainCandidate] = []
+        all_candidates: list[DomainCandidate] = []
 
         # Create modified params for each call
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
@@ -244,7 +243,6 @@ class RunDomainSearchUseCase:
                     topic=params.topic,
                     tlds=params.tlds,
                     count=per_call,
-                    language=params.language,
                     min_len=params.min_len,
                     max_len=params.max_len,
                 )
@@ -260,11 +258,10 @@ class RunDomainSearchUseCase:
 
         # Limit to requested count and remove duplicates
         seen = set()
-        unique_candidates = []
+        unique_candidates: list[DomainCandidate] = []
         for candidate in all_candidates:
             if candidate.name not in seen and len(unique_candidates) < params.count:
                 unique_candidates.append(candidate)
                 seen.add(candidate.name)
 
         return unique_candidates
-

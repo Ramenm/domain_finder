@@ -7,7 +7,8 @@ import random
 import threading
 import time
 from collections import deque
-from typing import Any, Dict, Iterator, Optional
+from collections.abc import Iterator
+from typing import Any
 
 import httpx
 
@@ -16,6 +17,7 @@ from domain_finder.domain.errors import ProviderError
 # Check if HTTP/2 is available
 try:
     import h2  # noqa: F401
+
     HTTP2_AVAILABLE = True
 except ImportError:
     HTTP2_AVAILABLE = False
@@ -32,7 +34,7 @@ class HttpClient:
         backoff_max: float = 3.0,
         max_connections: int = 100,
         max_keepalive_connections: int = 20,
-        rate_limit_per_minute: Optional[int] = None,
+        rate_limit_per_minute: int | None = None,
     ) -> None:
         """
         Initialize HTTP client.
@@ -50,7 +52,7 @@ class HttpClient:
         self.retries = retries
         self.backoff_min = backoff_min
         self.backoff_max = backoff_max
-        self._client: Optional[httpx.Client] = None
+        self._client: httpx.Client | None = None
         self._limits = httpx.Limits(
             max_connections=max_connections,
             max_keepalive_connections=max_keepalive_connections,
@@ -108,9 +110,9 @@ class HttpClient:
     def post(
         self,
         url: str,
-        headers: Dict[str, str],
-        json_data: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        headers: dict[str, str],
+        json_data: dict[str, Any],
+    ) -> dict[str, Any]:
         """
         Make POST request with retry logic.
 
@@ -127,7 +129,7 @@ class HttpClient:
         """
         client = self._get_client()
 
-        last_exc: Optional[Exception] = None
+        last_exc: Exception | None = None
         for attempt in range(1, self.retries + 1):
             try:
                 # Apply rate limiting
@@ -139,28 +141,26 @@ class HttpClient:
                     time.sleep(delay)
                     continue
                 response.raise_for_status()
-                return response.json()
+                return response.json()  # type: ignore[no-any-return]
             except httpx.HTTPStatusError as e:
                 last_exc = e
                 if e.response.status_code < 500:  # Don't retry client errors
                     raise ProviderError(
-                        f"HTTP-ошибка {e.response.status_code}: {e.response.text[:200]}"
-                    )
+                        f"HTTP error {e.response.status_code}: {e.response.text[:200]}"
+                    ) from e
             except Exception as e:  # noqa: BLE001
                 last_exc = e
                 delay = random.uniform(self.backoff_min, self.backoff_max) * attempt
                 time.sleep(delay)
 
-        raise ProviderError(
-            f"Запрос не выполнен после {self.retries} попыток: {last_exc}"
-        )
+        raise ProviderError(f"Request failed after {self.retries} attempts: {last_exc}")
 
     def post_stream(
         self,
         url: str,
-        headers: Dict[str, str],
-        json_data: Dict[str, Any],
-    ) -> Iterator[Dict[str, Any]]:
+        headers: dict[str, str],
+        json_data: dict[str, Any],
+    ) -> Iterator[dict[str, Any]]:
         """
         Make streaming POST request for LLM streaming responses.
 
@@ -178,7 +178,7 @@ class HttpClient:
         client = self._get_client()
         json_data = {**json_data, "stream": True}
 
-        last_exc: Optional[Exception] = None
+        last_exc: Exception | None = None
         for attempt in range(1, self.retries + 1):
             try:
                 # Apply rate limiting
@@ -197,7 +197,7 @@ class HttpClient:
 
                         # OpenAI-style: "data: {...}" or just JSON
                         if line.startswith("data: "):
-                            line = line[len("data: "):]
+                            line = line[len("data: ") :]
 
                         if line.strip() == "[DONE]":
                             break
@@ -215,21 +215,21 @@ class HttpClient:
                 last_exc = e
                 if e.response.status_code < 500:
                     raise ProviderError(
-                        f"HTTP-ошибка {e.response.status_code}: {e.response.text[:200]}"
-                    )
+                        f"HTTP error {e.response.status_code}: {e.response.text[:200]}"
+                    ) from e
             except Exception as e:  # noqa: BLE001
                 last_exc = e
                 delay = random.uniform(self.backoff_min, self.backoff_max) * attempt
                 time.sleep(delay)
 
         raise ProviderError(
-            f"Стриминг-запрос не выполнен после {self.retries} попыток: {last_exc}"
-        )
+            f"Streaming request failed after {self.retries} attempts: {last_exc}"
+        ) from last_exc
 
     def get(
         self,
         url: str,
-        headers: Optional[Dict[str, str]] = None,
+        headers: dict[str, str] | None = None,
     ) -> httpx.Response:
         """
         Make GET request.
@@ -249,4 +249,3 @@ class HttpClient:
         if self._client:
             self._client.close()
             self._client = None
-

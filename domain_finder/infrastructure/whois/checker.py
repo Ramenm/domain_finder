@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import concurrent.futures
 import time
-from typing import List
 
 import httpx
 from rich.console import Console
@@ -48,6 +47,7 @@ class DomainChecker(DomainCheckerPort):
         # Check if HTTP/2 is available
         try:
             import h2  # noqa: F401
+
             http2_enabled = True
         except ImportError:
             http2_enabled = False
@@ -86,7 +86,7 @@ class DomainChecker(DomainCheckerPort):
         if self.prefer_rdap:
             try:
                 result = self.rdap_client.check_domain(domain)
-                
+
                 # If fallback is enabled, always verify with WHOIS for accuracy
                 if self.whois_fallback:
                     try:
@@ -97,13 +97,13 @@ class DomainChecker(DomainCheckerPort):
                         # If both say available, trust RDAP (faster and reliable for availability)
                         if result.available:
                             return result
-                        # If RDAP says unavailable but WHOIS says available, 
+                        # If RDAP says unavailable but WHOIS says available,
                         # trust WHOIS (rare case, but WHOIS might be more accurate)
                         return whois_result
                     except Exception:  # noqa: BLE001
                         # If WHOIS fails (timeout, etc.), trust RDAP result
                         return result
-                
+
                 # No fallback - return RDAP result
                 return result
             except DomainCheckError:
@@ -115,7 +115,7 @@ class DomainChecker(DomainCheckerPort):
         else:
             return self.whois_client.check_domain(domain)
 
-    def check_domains(self, domains: List[str]) -> dict[str, DomainCheckResult]:
+    def check_domains(self, domains: list[str]) -> dict[str, DomainCheckResult]:
         """
         Check multiple domains concurrently.
 
@@ -129,17 +129,20 @@ class DomainChecker(DomainCheckerPort):
         unique_domains = list(dict.fromkeys(domains))
         results: dict[str, DomainCheckResult] = {}
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as pool, Progress(
-            SpinnerColumn(),
-            "[progress.description]{task.description}",
-            BarColumn(),
-            "{task.completed}/{task.total}",
-            TimeElapsedColumn(),
-            TimeRemainingColumn(),
-            transient=True,
-            console=console,
-        ) as progress:
-            task = progress.add_task("[cyan]Проверка доменов...[/cyan]", total=len(unique_domains))
+        with (
+            concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as pool,
+            Progress(
+                SpinnerColumn(),
+                "[progress.description]{task.description}",
+                BarColumn(),
+                "{task.completed}/{task.total}",
+                TimeElapsedColumn(),
+                TimeRemainingColumn(),
+                transient=True,
+                console=console,
+            ) as progress,
+        ):
+            task = progress.add_task("[cyan]Checking domains...[/cyan]", total=len(unique_domains))
             futures = {pool.submit(self.check_domain, domain): domain for domain in unique_domains}
 
             for future in concurrent.futures.as_completed(futures):
@@ -147,8 +150,8 @@ class DomainChecker(DomainCheckerPort):
                 try:
                     result = future.result()
                     results[result.domain] = result
-                except DomainCheckError as e:
-                    # For domain check errors (timeouts, service unavailable), 
+                except DomainCheckError:
+                    # For domain check errors (timeouts, service unavailable),
                     # mark as unavailable to avoid false positives
                     results[domain] = DomainCheckResult(
                         domain=domain,
@@ -156,7 +159,7 @@ class DomainChecker(DomainCheckerPort):
                         source="unknown",
                         checked_at=time.time(),
                     )
-                except Exception as e:  # noqa: BLE001
+                except Exception:  # noqa: BLE001
                     # On other errors, mark as unavailable
                     results[domain] = DomainCheckResult(
                         domain=domain,
@@ -168,4 +171,3 @@ class DomainChecker(DomainCheckerPort):
                     progress.advance(task)
 
         return results
-

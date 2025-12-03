@@ -1,8 +1,5 @@
 """Tests for domain services."""
 
-import pytest
-from unittest.mock import Mock
-
 from domain_finder.domain.models import DomainCandidate, DomainSearchParams
 from domain_finder.domain.ports import DomainProviderPort
 from domain_finder.domain.services import DomainGeneratorService
@@ -25,7 +22,6 @@ def test_domain_generator_service():
         topic="test",
         tlds=["com", "io", "ai"],
         count=10,
-        language="en",
         min_len=4,
         max_len=15,
     )
@@ -52,4 +48,3 @@ def test_domain_generator_service_parsing():
 
     assert len(candidates) == 3  # invalid-domain should be filtered out
     assert all(c.tld in ["com", "io"] for c in candidates)
-

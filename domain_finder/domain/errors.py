@@ -29,4 +29,3 @@ class ValidationError(DomainError):
     """Error related to data validation."""
 
     pass
-

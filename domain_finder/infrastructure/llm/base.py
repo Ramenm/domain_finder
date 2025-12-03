@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import threading
 from abc import ABC, abstractmethod
-from typing import Callable, Iterator, Optional
+from collections.abc import Callable
 
-from domain_finder.domain.errors import ProviderError
 from domain_finder.domain.models import DomainSearchParams, ProviderConfig
 from domain_finder.domain.ports import DomainProviderPort
 from domain_finder.infrastructure.http import HttpClient
@@ -17,13 +16,13 @@ class BaseLLMProvider(DomainProviderPort, ABC):
     """Base class for LLM providers with concurrency control."""
 
     # Global semaphore for limiting concurrent LLM requests across all instances
-    _global_semaphore: Optional[threading.BoundedSemaphore] = None
+    _global_semaphore: threading.BoundedSemaphore | None = None
     _semaphore_lock = threading.Lock()
 
     def __init__(
         self,
         config: ProviderConfig,
-        http_client: Optional[HttpClient] = None,
+        http_client: HttpClient | None = None,
         max_concurrent_requests: int = 8,
     ) -> None:
         """
@@ -65,7 +64,6 @@ class BaseLLMProvider(DomainProviderPort, ABC):
             topic=params.topic,
             tlds=params.tlds,
             count=params.count,
-            language=params.language,
             min_len=params.min_len,
             max_len=params.max_len,
         )
@@ -74,7 +72,7 @@ class BaseLLMProvider(DomainProviderPort, ABC):
     def generate_domains_stream(
         self,
         params: DomainSearchParams,
-        on_chunk: Optional[Callable[[str], None]] = None,
+        on_chunk: Callable[[str], None] | None = None,
     ) -> str:
         """
         Generate domain suggestions using LLM with streaming.
@@ -93,7 +91,6 @@ class BaseLLMProvider(DomainProviderPort, ABC):
             topic=params.topic,
             tlds=params.tlds,
             count=params.count,
-            language=params.language,
             min_len=params.min_len,
             max_len=params.max_len,
         )
@@ -118,7 +115,7 @@ class BaseLLMProvider(DomainProviderPort, ABC):
     def _generate_with_prompt_stream(
         self,
         prompt: str,
-        on_chunk: Optional[Callable[[str], None]] = None,
+        on_chunk: Callable[[str], None] | None = None,
     ) -> str:
         """
         Generate response from LLM using prompt with streaming.
@@ -148,4 +145,3 @@ class BaseLLMProvider(DomainProviderPort, ABC):
         """Release global semaphore."""
         if BaseLLMProvider._global_semaphore:
             BaseLLMProvider._global_semaphore.release()
-

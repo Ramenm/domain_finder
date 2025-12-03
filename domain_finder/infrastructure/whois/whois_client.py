@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import time
 
-import whois  # type: ignore
+import whois
 
-from domain_finder.domain.errors import DomainCheckError
 from domain_finder.domain.models import DomainCheckResult
 
 
@@ -48,7 +47,7 @@ class WhoisClient:
                 source="whois",
                 checked_at=time.time(),
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             # WHOIS errors are treated as "could not confirm" => consider as TAKEN
             # to avoid false positives
             return DomainCheckResult(
@@ -57,4 +56,3 @@ class WhoisClient:
                 source="whois",
                 checked_at=time.time(),
             )
-
