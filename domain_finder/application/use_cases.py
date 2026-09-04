@@ -10,9 +10,19 @@ from domain_finder.application.dto import DomainSearchRequest, DomainSearchResul
 from domain_finder.domain.errors import ProviderError
 from domain_finder.domain.models import DomainCandidate, DomainSearchParams
 from domain_finder.domain.ports import DomainCheckerPort, DomainProviderPort, ResultRepositoryPort
+from domain_finder.domain.scoring import DomainQualityScorer
 from domain_finder.domain.services import DomainCheckService, DomainGeneratorService
 from domain_finder.infrastructure.cache import CacheManager
 from domain_finder.infrastructure.persistence import ResultWriter
+
+GENERATION_STRATEGIES = (
+    "brandable",
+    "semantic_compound",
+    "short_technical",
+    "phonetic",
+    "action_result",
+    "abbreviation",
+)
 
 
 class RunDomainSearchUseCase:
@@ -40,6 +50,7 @@ class RunDomainSearchUseCase:
         self.writer = writer
         self.generator_service = DomainGeneratorService(provider)
         self.check_service = DomainCheckService(checker, repository)
+        self.quality_scorer = DomainQualityScorer()
 
     def execute(self, request: DomainSearchRequest) -> DomainSearchResult:
         """
@@ -55,9 +66,12 @@ class RunDomainSearchUseCase:
         if request.clear_cache and isinstance(self.repository, CacheManager):
             self.repository.clear()
 
-        # Global containers
+        # Session containers and truthful iteration metrics.
         all_suggested: list[str] = []
         all_available: list[str] = []
+        iterations_attempted = 0
+        iterations_completed = 0
+        iterations_failed = 0
 
         # Create search params
         search_params = DomainSearchParams(
@@ -77,11 +91,13 @@ class RunDomainSearchUseCase:
             gen_future: concurrent.futures.Future | None = None
 
             for iteration in range(1, request.iterations + 1):
+                iterations_attempted += 1
                 # Wait for current generation to complete (if any)
                 if gen_future is not None:
                     try:
                         candidates = gen_future.result()
                     except ProviderError:
+                        iterations_failed += 1
                         # Skip iteration on provider error
                         if iteration < request.iterations:
                             # Start next generation anyway
@@ -90,7 +106,8 @@ class RunDomainSearchUseCase:
                                 search_params,
                                 request.llm_workers,
                             )
-                        time.sleep(request.cooldown)
+                        if request.cooldown > 0:
+                            time.sleep(request.cooldown)
                         continue
                 else:
                     # First iteration - generate synchronously
@@ -100,8 +117,12 @@ class RunDomainSearchUseCase:
                             workers=request.llm_workers,
                         )
                     except ProviderError:
-                        time.sleep(request.cooldown)
+                        iterations_failed += 1
+                        if request.cooldown > 0:
+                            time.sleep(request.cooldown)
                         continue
+
+                iterations_completed += 1
 
                 # Filter out already seen domains
                 seen = set(all_suggested)
@@ -118,7 +139,8 @@ class RunDomainSearchUseCase:
                             search_params,
                             request.llm_workers,
                         )
-                    time.sleep(request.cooldown)
+                    if request.cooldown > 0:
+                        time.sleep(request.cooldown)
                     continue
 
                 # Start next generation IMMEDIATELY (while we check current batch)
@@ -201,11 +223,15 @@ class RunDomainSearchUseCase:
 
                     all_suggested.extend(domain_names)
 
-                time.sleep(request.cooldown)
+                if request.cooldown > 0:
+                    time.sleep(request.cooldown)
 
         # Return result
         return DomainSearchResult(
-            total_iterations=request.iterations,
+            total_iterations=iterations_completed,
+            iterations_attempted=iterations_attempted,
+            iterations_completed=iterations_completed,
+            iterations_failed=iterations_failed,
             total_generated=len(set(all_suggested)),
             total_available=len(set(all_available)),
             available_domains=sorted(set(all_available)),
@@ -236,32 +262,42 @@ class RunDomainSearchUseCase:
         all_candidates: list[DomainCandidate] = []
 
         # Create modified params for each call
+        successful_calls = 0
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
             futures = []
-            for _ in range(workers):
+            for worker_index in range(workers):
+                strategy = GENERATION_STRATEGIES[worker_index % len(GENERATION_STRATEGIES)]
                 call_params = DomainSearchParams(
                     topic=params.topic,
                     tlds=params.tlds,
                     count=per_call,
                     min_len=params.min_len,
                     max_len=params.max_len,
+                    strategy=strategy,
                 )
                 futures.append(pool.submit(self.generator_service.generate_and_parse, call_params))
 
             for future in concurrent.futures.as_completed(futures):
                 try:
                     candidates = future.result()
+                    successful_calls += 1
                     all_candidates.extend(candidates)
                 except Exception:  # noqa: BLE001
-                    # Skip failed requests
                     continue
 
-        # Limit to requested count and remove duplicates
-        seen = set()
-        unique_candidates: list[DomainCandidate] = []
-        for candidate in all_candidates:
-            if candidate.name not in seen and len(unique_candidates) < params.count:
-                unique_candidates.append(candidate)
-                seen.add(candidate.name)
+        if successful_calls == 0:
+            raise ProviderError("All parallel LLM generation requests failed")
 
-        return unique_candidates
+        # Stable deduplication followed by deterministic local quality ranking.
+        unique_by_name: dict[str, DomainCandidate] = {}
+        for candidate in all_candidates:
+            unique_by_name.setdefault(candidate.name, candidate)
+
+        ranked = sorted(
+            unique_by_name.values(),
+            key=lambda candidate: (
+                -self.quality_scorer.score(candidate, params.topic),
+                candidate.name,
+            ),
+        )
+        return ranked[: params.count]

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from domain_finder.domain.models import DomainCheckResult
+from domain_finder.domain.models import DomainCheckResult, DomainCheckStatus
 from domain_finder.domain.ports import DomainCheckerPort, ResultRepositoryPort
 from domain_finder.domain.services import DomainCheckService
 from domain_finder.infrastructure.cache import CacheManager
@@ -181,8 +181,8 @@ class TestDomainCheckService:
         assert "cached.com" not in checker.checked_domains
         assert "fresh.com" in checker.checked_domains
 
-    def test_check_domains_does_not_cache_unknown_source(self):
-        """Test that results with 'unknown' source are not cached."""
+    def test_check_domains_passes_unknown_result_to_ttl_cache(self):
+        """Transient results are cached briefly by TTL-aware repositories."""
         repository = MockRepository()
         # Simulate error result (marked as unavailable with unknown source)
         error_result = DomainCheckResult(
@@ -202,9 +202,10 @@ class TestDomainCheckService:
         assert "error.com" in results
         assert results["error.com"].source == "unknown"
 
-        # Should NOT be cached (unknown source indicates error)
+        # Repository decides the short TTL for inconclusive results.
         cached = repository.get_cached_result("error.com")
-        assert cached is None
+        assert cached is not None
+        assert cached.available is None
 
     def test_check_domains_caches_successful_results(self):
         """Test that successful results (rdap/whois) are cached."""
@@ -254,10 +255,11 @@ class TestDomainCheckService:
         # Check domains - should handle exception
         results = service.check_domains_with_cache(["failing.com"])
 
-        # Should mark as unavailable with unknown source
+        # Failure is inconclusive, not proof that the domain is registered.
         assert len(results) == 1
         assert "failing.com" in results
-        assert results["failing.com"].available is False
+        assert results["failing.com"].available is None
+        assert results["failing.com"].status is DomainCheckStatus.UNKNOWN
         assert results["failing.com"].source == "unknown"
 
         # Should NOT be cached (error state)

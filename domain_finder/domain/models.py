@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class DomainCandidate(BaseModel):
@@ -17,39 +18,101 @@ class DomainCandidate(BaseModel):
     @field_validator("name")
     @classmethod
     def validate_name(cls, v: str) -> str:
-        """Validate domain name format."""
-        v = v.strip().lower()
-        if "." not in v:
-            raise ValueError("Domain name must contain a dot")
-        if v.count(".") != 1:
-            raise ValueError("Domain name must have exactly one dot (no subdomains)")
+        """Normalize a registrable domain, including multi-label suffixes."""
+        v = v.strip().lower().rstrip(".")
+        if "." not in v or v.startswith(".") or ".." in v:
+            raise ValueError("Domain name must contain a registrable label and suffix")
         return v
 
+    @model_validator(mode="after")
+    def validate_parts(self) -> DomainCandidate:
+        """Keep name, registrable label, and configured suffix consistent."""
+        if "." in self.label or not self.label:
+            raise ValueError("Domain label must be a single non-empty DNS label")
+        if not self.tld or self.name != f"{self.label}.{self.tld}":
+            raise ValueError("Domain parts do not match domain name")
+        return self
+
     @classmethod
-    def from_string(cls, domain_str: str) -> DomainCandidate:
-        """Create DomainCandidate from string like 'example.com'."""
-        domain_str = domain_str.strip().lower()
-        if "." not in domain_str:
-            raise ValueError(f"Invalid domain format: {domain_str}")
-        parts = domain_str.split(".", 1)
-        return cls(name=domain_str, label=parts[0], tld=parts[1])
+    def from_string(cls, domain_str: str, suffix: str | None = None) -> DomainCandidate:
+        """Create a candidate, requiring explicit context for multi-label suffixes."""
+        domain_str = domain_str.strip().lower().rstrip(".")
+        if suffix is None:
+            if domain_str.count(".") != 1:
+                raise ValueError(f"Ambiguous domain format without suffix context: {domain_str}")
+            label, suffix = domain_str.split(".", 1)
+        else:
+            suffix = suffix.strip().lower().lstrip(".").rstrip(".")
+            ending = f".{suffix}"
+            if not suffix or not domain_str.endswith(ending):
+                raise ValueError(f"Domain does not match suffix {suffix!r}: {domain_str}")
+            label = domain_str[: -len(ending)]
+            if not label or "." in label:
+                raise ValueError(
+                    f"Domain contains a subdomain before suffix {suffix!r}: {domain_str}"
+                )
+        return cls(name=domain_str, label=label, tld=suffix)
+
+
+class DomainCheckStatus(str, Enum):
+    """Outcome of a domain availability lookup."""
+
+    AVAILABLE = "available"
+    REGISTERED = "registered"
+    UNKNOWN = "unknown"
+    RATE_LIMITED = "rate_limited"
+    NETWORK_ERROR = "network_error"
+    UNSUPPORTED = "unsupported"
+    INVALID = "invalid"
 
 
 class DomainCheckResult(BaseModel):
-    """Result of domain availability check."""
+    """Result of a domain availability check with explicit uncertainty."""
 
     domain: str = Field(..., description="Domain name that was checked")
-    available: bool = Field(..., description="Whether the domain is available")
-    source: str = Field(..., description="Source of check: 'rdap' or 'whois'")
+    status: DomainCheckStatus | None = None
+    available: bool | None = Field(
+        default=None, description="True/False only for definitive outcomes"
+    )
+    source: str = Field(..., description="Source of check")
     checked_at: float = Field(..., description="Unix timestamp of check")
+    detail: str | None = None
+    latency_ms: float | None = Field(default=None, ge=0)
+    retries: int = Field(default=0, ge=0)
 
     @field_validator("source")
     @classmethod
     def validate_source(cls, v: str) -> str:
         """Validate source value."""
-        if v not in ("rdap", "whois", "unknown"):
-            raise ValueError("Source must be 'rdap', 'whois', or 'unknown'")
+        if v not in ("rdap", "whois", "dns", "cache", "unknown"):
+            raise ValueError("Unsupported domain check source")
         return v
+
+    @model_validator(mode="after")
+    def normalize_status(self) -> DomainCheckResult:
+        """Infer legacy boolean results and keep uncertainty explicit."""
+        if self.status is None:
+            if self.source == "unknown":
+                self.status = DomainCheckStatus.UNKNOWN
+            elif self.available is True:
+                self.status = DomainCheckStatus.AVAILABLE
+            elif self.available is False:
+                self.status = DomainCheckStatus.REGISTERED
+            else:
+                self.status = DomainCheckStatus.UNKNOWN
+
+        if self.status is DomainCheckStatus.AVAILABLE:
+            self.available = True
+        elif self.status is DomainCheckStatus.REGISTERED:
+            self.available = False
+        else:
+            self.available = None
+        return self
+
+    @property
+    def is_definitive(self) -> bool:
+        """Return whether the registry state is known definitively."""
+        return self.status in (DomainCheckStatus.AVAILABLE, DomainCheckStatus.REGISTERED)
 
 
 class ProviderConfig(BaseModel):
@@ -81,6 +144,7 @@ class DomainSearchParams(BaseModel):
     count: int = Field(..., ge=1, le=300, description="Number of domains to generate")
     min_len: int = Field(default=4, ge=1, le=63, description="Minimum label length")
     max_len: int = Field(default=15, ge=1, le=63, description="Maximum label length")
+    strategy: str | None = Field(default=None, description="Generation strategy hint")
 
     @field_validator("max_len")
     @classmethod

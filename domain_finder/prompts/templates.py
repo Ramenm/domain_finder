@@ -1,4 +1,15 @@
-"""Prompt templates for domain generation."""
+"""Prompt templates for diversified domain generation."""
+
+from __future__ import annotations
+
+STRATEGY_GUIDANCE = {
+    "brandable": "Invent distinctive pronounceable brand words; avoid generic keyword stuffing.",
+    "semantic_compound": "Combine two concise topic-relevant concepts into natural compounds.",
+    "short_technical": "Prefer compact technical names with clear product or tool associations.",
+    "phonetic": "Favor smooth, easy-to-say names with simple spelling and strong recall.",
+    "action_result": "Use names suggesting the user's action, outcome, speed, or benefit.",
+    "abbreviation": "Create readable abbreviation-inspired names, not opaque random initials.",
+}
 
 
 def build_prompt(
@@ -7,35 +18,16 @@ def build_prompt(
     count: int,
     min_len: int = 4,
     max_len: int = 15,
+    strategy: str | None = None,
 ) -> str:
-    """
-    Build a prompt for LLM to generate domain names.
-
-    Args:
-        topic: Topic/theme for domain generation
-        tlds: List of allowed TLDs
-        count: Number of domains to generate
-        min_len: Minimum label length
-        max_len: Maximum label length
-
-    Returns:
-        Formatted prompt string
-    """
+    """Build a compact prompt that encourages diversity and machine-readable output."""
     tlds_str = ", ".join(f".{t.lower().lstrip('.')}" for t in tlds)
-
-    header = (
-        "Generate a list of unique, short, and memorable second-level domain names "
-        f"for the topic: {topic!r}. "
+    guidance = STRATEGY_GUIDANCE.get(strategy or "", "Generate varied short memorable names.")
+    return (
+        f"Generate {count} unique domain candidates for topic {topic!r}.\n"
+        f"Strategy: {strategy or 'general'} — {guidance}\n"
+        f"Allowed TLDs: {tlds_str}. Label length: {min_len}-{max_len}.\n"
+        "Use ASCII letters/digits; internal hyphens are allowed but avoid them when possible. "
+        "No subdomains. Avoid near-duplicates and trivial spelling variants.\n"
+        "Return ONLY a JSON array of domain strings, with no prose or markdown."
     )
-    rules = (
-        f"- Number of domains: {count}.\n"
-        f"- Allowed TLDs: {tlds_str}.\n"
-        f"- Length of the second-level label (without TLD): {min_len} to {max_len} characters.\n"
-        "- Output only domains, one per line or comma-separated.\n"
-        "- No explanations, introductions, or additional text.\n"
-        "- Use only ASCII letters and digits; hyphen allowed only inside the label, not at the ends.\n"
-        "- Exactly one dot in the domain (no subdomains).\n"
-    )
-    footer = "Return only the list of domains without any additional text."
-
-    return f"{header}\n{rules}\n{footer}"

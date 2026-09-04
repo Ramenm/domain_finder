@@ -58,6 +58,15 @@ class OpenAIProvider(BaseLLMProvider):
             if not config.api_key:
                 config.api_key = api_key
 
+        if http_client is None:
+            http_client = HttpClient(
+                timeout=config.timeout,
+                retries=settings.max_retries,
+                backoff_min=settings.retry_backoff_min,
+                backoff_max=settings.retry_backoff_max,
+                max_connections=settings.max_connections,
+                max_keepalive_connections=settings.max_keepalive_connections,
+            )
         max_concurrent = max_concurrent_requests or settings.max_concurrent_llm_requests
         super().__init__(config, http_client, max_concurrent_requests=max_concurrent)
         base_url = settings.get_openai_base_url()

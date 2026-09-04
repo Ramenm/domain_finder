@@ -46,5 +46,12 @@ def test_domain_generator_service_parsing():
         limit=10,
     )
 
-    assert len(candidates) == 3  # invalid-domain should be filtered out
+    # Bare labels are valid generation output and expand over allowed TLDs in order.
+    assert [c.name for c in candidates] == [
+        "example.com",
+        "test.io",
+        "invalid-domain.com",
+        "invalid-domain.io",
+        "another.com",
+    ]
     assert all(c.tld in ["com", "io"] for c in candidates)

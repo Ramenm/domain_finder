@@ -2,51 +2,33 @@
 
 from __future__ import annotations
 
+import json
 import re
 import time
-from typing import List, Optional
 
-from .errors import ValidationError
-from .models import DomainCandidate, DomainSearchParams
+from .models import DomainCandidate, DomainCheckResult, DomainCheckStatus, DomainSearchParams
 from .ports import DomainCheckerPort, DomainProviderPort, ResultRepositoryPort
 
-DOMAIN_RE = re.compile(
-    r"\b(?P<label>[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)\.(?P<tld>[a-zA-Z]{2,24})\b"
-)
+DNS_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+
+
+def _idna_ascii(value: str) -> str | None:
+    """Normalize Unicode DNS names/suffixes to their ASCII wire form."""
+    try:
+        return value.strip().lower().strip(".").encode("idna").decode("ascii")
+    except UnicodeError:
+        return None
 
 
 class DomainGeneratorService:
-    """Service for generating and parsing domain suggestions."""
+    """Generate and deterministically normalize domain suggestions."""
 
     def __init__(self, provider: DomainProviderPort) -> None:
-        """
-        Initialize domain generator service.
-
-        Args:
-            provider: LLM provider port for generating suggestions
-        """
         self.provider = provider
 
-    def generate_and_parse(
-        self, params: DomainSearchParams
-    ) -> List[DomainCandidate]:
-        """
-        Generate domain suggestions and parse them into DomainCandidate objects.
-
-        Args:
-            params: Parameters for domain generation
-
-        Returns:
-            List of parsed domain candidates
-
-        Raises:
-            ValidationError: If parsing fails
-        """
-        # Generate raw text from LLM
+    def generate_and_parse(self, params: DomainSearchParams) -> list[DomainCandidate]:
         raw_text = self.provider.generate_domains(params)
-
-        # Parse domains from text
-        candidates = self._parse_domains_from_text(
+        return self._parse_domains_from_text(
             raw_text,
             allowed_tlds=params.tlds,
             min_len=params.min_len,
@@ -54,118 +36,98 @@ class DomainGeneratorService:
             limit=params.count,
         )
 
-        return candidates
+    @staticmethod
+    def _extract_tokens(text: str) -> list[str]:
+        stripped = text.strip()
+        try:
+            payload = json.loads(stripped)
+        except (json.JSONDecodeError, TypeError):
+            payload = None
+
+        if isinstance(payload, list):
+            return [item.strip() for item in payload if isinstance(item, str) and item.strip()]
+        if isinstance(payload, dict) and isinstance(payload.get("domains"), list):
+            return [
+                item.strip()
+                for item in payload["domains"]
+                if isinstance(item, str) and item.strip()
+            ]
+
+        cleaned = re.sub(r"[|•\t]", " ", text).replace("\n", ",")
+        return [part.strip() for part in cleaned.split(",") if part.strip()]
 
     def _parse_domains_from_text(
         self,
         text: str,
-        allowed_tlds: List[str],
+        allowed_tlds: list[str],
         min_len: int,
         max_len: int,
         limit: int,
-    ) -> List[DomainCandidate]:
-        """
-        Parse domain candidates from LLM response text.
-
-        Args:
-            text: Raw text from LLM
-            allowed_tlds: List of allowed TLDs
-            min_len: Minimum label length
-            max_len: Maximum label length
-            limit: Maximum number of domains to extract
-
-        Returns:
-            List of valid domain candidates
-        """
-        # Clean text
-        cleaned = re.sub(r"[|•\t]", " ", text)
-        cleaned = cleaned.replace("\n", ",")
-
-        # Split by commas
-        parts = [p.strip() for p in cleaned.split(",") if p.strip()]
-
-        candidates: List[DomainCandidate] = []
+    ) -> list[DomainCandidate]:
+        ordered_tlds = list(
+            dict.fromkeys(
+                ascii_tld for tld in allowed_tlds if tld and (ascii_tld := _idna_ascii(tld))
+            )
+        )
+        allowed_set = set(ordered_tlds)
+        candidates: list[DomainCandidate] = []
         seen: set[str] = set()
-        allowed_tlds_set = {t.lstrip(".").lower() for t in allowed_tlds}
-        force_tld = allowed_tlds[0] if len(allowed_tlds) == 1 else None
 
-        for part in parts:
+        def add(domain: str) -> None:
+            if len(candidates) >= limit or domain in seen:
+                return
+            normalized = self._normalize_domain_token(domain, allowed_set, min_len, max_len)
+            if normalized is None or normalized in seen:
+                return
+            try:
+                suffix = normalized.split(".", 1)[1]
+                candidate = DomainCandidate.from_string(normalized, suffix=suffix)
+            except ValueError:
+                return
+            seen.add(normalized)
+            candidates.append(candidate)
+
+        for raw in self._extract_tokens(text):
             if len(candidates) >= limit:
                 break
-
-            # Try to extract domain
-            domain_str = self._normalize_domain_token(
-                part, allowed_tlds_set, force_tld, min_len, max_len
-            )
-
-            if domain_str and domain_str not in seen:
-                try:
-                    candidate = DomainCandidate.from_string(domain_str)
-                    candidates.append(candidate)
-                    seen.add(domain_str)
-                except ValueError:
-                    continue
-
+            token = raw.strip().lower().strip(",.;:()[]<>\"'`")
+            if not token:
+                continue
+            if "." in token:
+                add(token)
+                continue
+            for tld in ordered_tlds:
+                add(f"{token}.{tld}")
+                if len(candidates) >= limit:
+                    break
         return candidates
 
+    @staticmethod
     def _normalize_domain_token(
-        self,
         token: str,
         allowed_tlds: set[str],
-        force_tld: Optional[str],
         min_len: int,
         max_len: int,
-    ) -> Optional[str]:
-        """
-        Normalize a token to a valid domain string.
-
-        Args:
-            token: Input token
-            allowed_tlds: Set of allowed TLDs
-            force_tld: TLD to use if token has no TLD
-            min_len: Minimum label length
-            max_len: Maximum label length
-
-        Returns:
-            Normalized domain string or None if invalid
-        """
-        token = token.strip().lower()
-        token = token.strip(",.;:()[]<>\"'`")
-
-        # Add TLD if missing
-        if "." not in token:
-            use_tld = (force_tld or (list(allowed_tlds)[0] if allowed_tlds else "com")).lstrip(".")
-            candidate = f"{token}.{use_tld}"
-        else:
-            candidate = token
-
-        # Validate format
-        match = DOMAIN_RE.fullmatch(candidate)
-        if not match:
+    ) -> str | None:
+        candidate_raw = token.strip().lower().strip(",.;:()[]<>\"'`").rstrip(".")
+        candidate = _idna_ascii(candidate_raw)
+        if candidate is None:
             return None
-
-        label = match.group("label")
-        tld = match.group("tld")
-
-        # Check length
-        if len(label) < min_len or len(label) > max_len:
+        suffixes = sorted(allowed_tlds, key=lambda value: (-len(value), value))
+        suffix = next(
+            (value for value in suffixes if candidate.endswith(f".{value}")),
+            None,
+        )
+        if suffix is None:
             return None
-
-        # Check TLD
-        if allowed_tlds and tld not in allowed_tlds:
-            if force_tld:
-                return f"{label}.{force_tld.lstrip('.')}"
+        label = candidate[: -(len(suffix) + 1)]
+        if "." in label or not DNS_LABEL_RE.fullmatch(label):
             return None
-
-        # Ensure exactly one dot
-        if candidate.count(".") != 1:
+        if not min_len <= len(label) <= max_len:
             return None
-
-        # No leading/trailing hyphens
-        if label.startswith("-") or label.endswith("-"):
+        if any(not DNS_LABEL_RE.fullmatch(part) for part in suffix.split(".")):
             return None
-
-        return f"{label}.{tld}"
+        return f"{label}.{suffix}"
 
 
 class DomainCheckService:
@@ -186,12 +148,10 @@ class DomainCheckService:
         self.checker = checker
         self.repository = repository
 
-    def check_domains_with_cache(
-        self, domains: List[str]
-    ) -> dict[str, DomainCheckResult]:
+    def check_domains_with_cache(self, domains: list[str]) -> dict[str, DomainCheckResult]:
         """
         Check domains with caching support.
-        
+
         Important: Only caches successful results. Errors are not cached
         to avoid marking domains as unavailable when check failed.
 
@@ -204,7 +164,7 @@ class DomainCheckService:
         results: dict[str, DomainCheckResult] = {}
 
         # Check cache first
-        domains_to_check: List[str] = []
+        domains_to_check: list[str] = []
         for domain in domains:
             cached = self.repository.get_cached_result(domain)
             if cached:
@@ -216,29 +176,27 @@ class DomainCheckService:
         if domains_to_check:
             try:
                 fresh_results = self.checker.check_domains(domains_to_check)
-                
+
                 # Only cache successful results (not errors marked as unavailable)
                 for domain, result in fresh_results.items():
                     results[domain] = result
-                    # Only cache if we got a definitive answer (not "unknown" source)
-                    # This avoids caching error states as "unavailable"
-                    if result.source != "unknown":
-                        self.repository.cache_result(result)
+                    # Cache every status; the repository applies short TTLs to transient failures.
+                    self.repository.cache_result(result)
             except Exception as e:  # noqa: BLE001
                 # If checker fails completely, mark all as unavailable to avoid false positives
                 import logging
+
                 logger = logging.getLogger(__name__)
                 logger.error(f"Domain checker failed completely: {e}")
                 # Mark all unchecked domains as unavailable (conservative approach)
                 for domain in domains_to_check:
                     if domain not in results:
-                        from domain_finder.domain.models import DomainCheckResult
                         results[domain] = DomainCheckResult(
                             domain=domain,
-                            available=False,
+                            status=DomainCheckStatus.UNKNOWN,
                             source="unknown",
                             checked_at=time.time(),
+                            detail=str(e),
                         )
 
         return results
-

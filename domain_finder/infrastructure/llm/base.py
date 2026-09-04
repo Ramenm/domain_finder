@@ -15,10 +15,6 @@ from domain_finder.prompts.templates import build_prompt
 class BaseLLMProvider(DomainProviderPort, ABC):
     """Base class for LLM providers with concurrency control."""
 
-    # Global semaphore for limiting concurrent LLM requests across all instances
-    _global_semaphore: threading.BoundedSemaphore | None = None
-    _semaphore_lock = threading.Lock()
-
     def __init__(
         self,
         config: ProviderConfig,
@@ -38,14 +34,8 @@ class BaseLLMProvider(DomainProviderPort, ABC):
             timeout=config.timeout,
             retries=3,
         )
-        self._max_concurrent = max_concurrent_requests
-
-        # Initialize global semaphore if not exists
-        with BaseLLMProvider._semaphore_lock:
-            if BaseLLMProvider._global_semaphore is None:
-                BaseLLMProvider._global_semaphore = threading.BoundedSemaphore(
-                    max_concurrent_requests
-                )
+        self._max_concurrent = max(1, max_concurrent_requests)
+        self._semaphore = threading.BoundedSemaphore(self._max_concurrent)
 
     def generate_domains(self, params: DomainSearchParams) -> str:
         """
@@ -66,6 +56,7 @@ class BaseLLMProvider(DomainProviderPort, ABC):
             count=params.count,
             min_len=params.min_len,
             max_len=params.max_len,
+            strategy=params.strategy,
         )
         return self._generate_with_prompt(prompt)
 
@@ -93,6 +84,7 @@ class BaseLLMProvider(DomainProviderPort, ABC):
             count=params.count,
             min_len=params.min_len,
             max_len=params.max_len,
+            strategy=params.strategy,
         )
         return self._generate_with_prompt_stream(prompt, on_chunk)
 
@@ -137,11 +129,9 @@ class BaseLLMProvider(DomainProviderPort, ABC):
         return self._generate_with_prompt(prompt)
 
     def _acquire_semaphore(self) -> None:
-        """Acquire global semaphore for concurrent request limiting."""
-        if BaseLLMProvider._global_semaphore:
-            BaseLLMProvider._global_semaphore.acquire()
+        """Acquire this provider instance's concurrency slot."""
+        self._semaphore.acquire()
 
     def _release_semaphore(self) -> None:
-        """Release global semaphore."""
-        if BaseLLMProvider._global_semaphore:
-            BaseLLMProvider._global_semaphore.release()
+        """Release this provider instance's concurrency slot."""
+        self._semaphore.release()

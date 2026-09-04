@@ -67,6 +67,7 @@ OPENAI_BASE_URL=https://api.openai.com/v1
 
 # Optional: Domain Checking Preferences
 USE_RDAP=true
+REGISTRY_PROFILE_FILE=.domain_finder_registry_profiles.sqlite3
 
 # Optional: HTTP Settings
 HTTP_TIMEOUT=60.0
@@ -91,6 +92,7 @@ MAX_CONCURRENT_LLM_REQUESTS=8
 | `OPENAI_MODEL` | Default OpenAI model | `gpt-4o` |
 | `OPENAI_BASE_URL` | OpenAI API base URL | `https://api.openai.com/v1` |
 | `USE_RDAP` | Prefer RDAP over WHOIS | `true` |
+| `REGISTRY_PROFILE_FILE` | Persistent learned registry routing/latency profile | `.domain_finder_registry_profiles.sqlite3` |
 | `HTTP_TIMEOUT` | HTTP request timeout (seconds) | `60.0` |
 | `RDAP_TIMEOUT` | RDAP request timeout (seconds) | `10.0` |
 | `MAX_CONNECTIONS` | Maximum HTTP connections | `100` |
@@ -137,9 +139,9 @@ domain-finder run \
 | `--min-len` | | Minimum domain label length | `4` |
 | `--max-len` | | Maximum domain label length | `15` |
 | `--rdap` / `--whois` | | Prefer RDAP or WHOIS | From env |
-| `--whois-fallback` | | Use WHOIS as fallback | `false` |
+| `--whois-fallback` | | Use WHOIS as fallback when RDAP is inconclusive | `true` |
 | `--skip-check` | | Skip availability check | `false` |
-| `--cache-file` | | Cache file path | `domains_cache.json` |
+| `--cache-file` | | Cache file path | `domains_cache.sqlite3` |
 | `--clear-cache` | | Clear cache before start | `false` |
 | `--results` | | Results TXT file | `results.txt` |
 | `--results-csv` | | Results CSV file | `results.csv` |
@@ -291,8 +293,8 @@ example1.com,rdap,1234567890.123
 example2.io,whois,1234567891.456
 ```
 
-### Cache File (`domains_cache.json`)
-JSON cache of domain check results to avoid redundant API calls.
+### Cache File (`domains_cache.sqlite3`)
+SQLite/WAL cache of domain check results with status-aware TTLs to avoid redundant network checks.
 
 ## Troubleshooting
 

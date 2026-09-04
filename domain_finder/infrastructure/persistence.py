@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import csv
+import threading
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -15,55 +17,64 @@ console = Console()
 
 
 class ResultWriter:
-    """Writer for domain search results to files."""
+    """Deduplicating writer for available domain results."""
 
     def __init__(
         self,
         txt_path: str = "results.txt",
         csv_path: str | None = "results.csv",
     ) -> None:
-        """
-        Initialize result writer.
-
-        Args:
-            txt_path: Path to text file for available domains
-            csv_path: Optional path to CSV file for detailed results
-        """
         self.txt_path = Path(txt_path)
         self.csv_path = Path(csv_path) if csv_path else None
+        self.txt_path.parent.mkdir(parents=True, exist_ok=True)
+        if self.csv_path:
+            self.csv_path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.RLock()
 
-        # Ensure files exist
         if not self.txt_path.exists():
             self.txt_path.write_text("", encoding="utf-8")
-        if self.csv_path and not self.csv_path.exists():
-            self.csv_path.write_text("domain,available,source,checked_at\n", encoding="utf-8")
+        self._seen = {
+            line.strip()
+            for line in self.txt_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        }
+
+        if self.csv_path and (not self.csv_path.exists() or self.csv_path.stat().st_size == 0):
+            with self.csv_path.open("w", newline="", encoding="utf-8") as handle:
+                csv.writer(handle).writerow(["domain", "available", "source", "checked_at"])
 
     def append_available(self, domain_records: Iterable[tuple[str, str, float]]) -> None:
-        """
-        Append available domains to output files.
+        """Append each domain once, safely consuming one-shot iterables."""
+        records = list(domain_records)
+        if not records:
+            return
+        with self._lock:
+            unique: list[tuple[str, str, float]] = []
+            for domain, source, checked_at in records:
+                if domain in self._seen:
+                    continue
+                self._seen.add(domain)
+                unique.append((domain, source, checked_at))
+            if not unique:
+                return
 
-        Args:
-            domain_records: Iterable of tuples (domain, source, checked_at)
-        """
-        with self.txt_path.open("a", encoding="utf-8") as f_txt:
-            for domain, _source, _ts in domain_records:
-                f_txt.write(f"{domain}\n")
+            with self.txt_path.open("a", encoding="utf-8") as handle:
+                for domain, _source, _checked_at in unique:
+                    handle.write(f"{domain}\n")
 
-        if self.csv_path:
-            with self.csv_path.open("a", encoding="utf-8") as f_csv:
-                for domain, source, ts in domain_records:
-                    f_csv.write(f"{domain},true,{source},{int(ts)}\n")
+            if self.csv_path:
+                with self.csv_path.open("a", newline="", encoding="utf-8") as handle:
+                    writer = csv.writer(handle)
+                    for domain, source, checked_at in unique:
+                        writer.writerow([domain, "true", source, int(checked_at)])
 
     def append_results(self, results: list[DomainCheckResult]) -> None:
-        """
-        Append domain check results to output files.
-
-        Args:
-            results: List of domain check results
-        """
-        available_records = [(r.domain, r.source, r.checked_at) for r in results if r.available]
-        if available_records:
-            self.append_available(available_records)
+        available_records = [
+            (result.domain, result.source, result.checked_at)
+            for result in results
+            if result.available is True
+        ]
+        self.append_available(available_records)
 
     @staticmethod
     def show_table(available: list[str]) -> None:

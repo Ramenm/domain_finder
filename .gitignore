@@ -133,5 +133,10 @@ dmypy.json
 .DS_Store
 Thumbs.db
 
-# Project specific
-.cursor/
+# Domain Finder runtime state
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+.rdap_dns_bootstrap.json
+.rdap_dns_bootstrap.json.tmp
+benchmark-results*/

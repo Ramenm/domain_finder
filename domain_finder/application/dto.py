@@ -21,12 +21,12 @@ class DomainSearchRequest:
     temperature: float = 0.7
     timeout: float = 60.0
     use_rdap: bool = True
-    whois_fallback: bool = False
+    whois_fallback: bool = True
     max_workers: int = 20
     min_len: int = 4
     max_len: int = 15
-    cooldown: float = 2.0
-    cache_file: str = "domains_cache.json"
+    cooldown: float = 0.0
+    cache_file: str = "domains_cache.sqlite3"
     clear_cache: bool = False
     results_txt: str = "results.txt"
     results_csv: str | None = "results.csv"
@@ -42,6 +42,9 @@ class DomainSearchResult(BaseModel):
     """Result DTO for domain search use case."""
 
     total_iterations: int
+    iterations_attempted: int
+    iterations_completed: int
+    iterations_failed: int
     total_generated: int
     total_available: int
     available_domains: list[str]

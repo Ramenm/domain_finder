@@ -74,6 +74,27 @@ def _create_provider(
         raise typer.BadParameter("provider must be 'openai'")
 
 
+def _create_checker(
+    settings: Settings,
+    use_rdap: bool,
+    whois_fallback: bool,
+    max_workers: int,
+    dns_prefilter: bool = False,
+) -> DomainChecker:
+    """Create a checker with all relevant environment settings wired through."""
+    return DomainChecker(
+        prefer_rdap=use_rdap,
+        whois_fallback=whois_fallback,
+        max_workers=max_workers,
+        rdap_timeout=settings.rdap_timeout,
+        max_connections=settings.max_connections,
+        max_keepalive_connections=settings.max_keepalive_connections,
+        max_retries=settings.max_retries,
+        dns_prefilter=dns_prefilter,
+        registry_profile_file=settings.registry_profile_file,
+    )
+
+
 def run(
     topic: str = typer.Option(
         ...,
@@ -118,7 +139,7 @@ def run(
         help="Prefer RDAP (--rdap) or WHOIS (--whois). If not specified, value is taken from USE_RDAP environment variable in .env.",
     ),
     whois_fallback: bool = typer.Option(
-        False,
+        True,
         "--whois-fallback",
         help="Use WHOIS as a fallback method if RDAP did not provide a definitive answer.",
     ),
@@ -131,9 +152,13 @@ def run(
     max_len: int = typer.Option(
         15, "--max-len", help="Maximum length of the second-level domain label (without TLD)."
     ),
-    cooldown: float = typer.Option(2.0, "--cooldown", help="Pause in seconds between iterations."),
+    cooldown: float = typer.Option(
+        0.0, "--cooldown", min=0.0, help="Optional pause in seconds between iterations."
+    ),
     cache_file: str = typer.Option(
-        "domains_cache.json", "--cache-file", help="Path to cache file with domain check results."
+        "domains_cache.sqlite3",
+        "--cache-file",
+        help="Path to cache file with domain check results.",
     ),
     clear_cache: bool = typer.Option(False, "--clear-cache", help="Clear cache before starting."),
     results_txt: str = typer.Option(
@@ -179,12 +204,11 @@ def run(
         console.print("[yellow]⚠ Cache cleared.[/yellow]")
 
     writer = ResultWriter(txt_path=results_txt, csv_path=results_csv)
-    checker = DomainChecker(
-        prefer_rdap=use_rdap,
+    checker = _create_checker(
+        settings=settings,
+        use_rdap=use_rdap,
         whois_fallback=whois_fallback,
         max_workers=max_workers,
-        max_connections=settings.max_connections,
-        max_keepalive_connections=settings.max_keepalive_connections,
     )
 
     # Create use case

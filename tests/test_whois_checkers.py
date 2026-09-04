@@ -6,11 +6,15 @@ import random
 import string
 import time
 
+import pytest
+
 from domain_finder.domain.errors import DomainCheckError
 from domain_finder.domain.models import DomainCheckResult
 from domain_finder.infrastructure.whois.checker import DomainChecker
 from domain_finder.infrastructure.whois.rdap_client import RdapClient
 from domain_finder.infrastructure.whois.whois_client import WhoisClient
+
+pytestmark = [pytest.mark.network, pytest.mark.slow]
 
 
 def generate_random_domain(
@@ -174,17 +178,17 @@ class TestRdapClient:
         elapsed = time.time() - start_time
 
         # Should get 100% results (all domains should be checked successfully)
-        assert len(results) == len(
-            domains
-        ), f"Expected 100% success rate, got {len(results)}/{len(domains)}"
+        assert len(results) == len(domains), (
+            f"Expected 100% success rate, got {len(results)}/{len(domains)}"
+        )
         # Log statistics
         print("\nRDAP Large Scale Test:")
         print(f"  Total domains: {len(domains)}")
         print(f"  Successful checks: {len(results)}")
         print(f"  Errors: {len(errors)}")
-        print(f"  Success rate: {len(results)/len(domains)*100:.1f}%")
+        print(f"  Success rate: {len(results) / len(domains) * 100:.1f}%")
         print(f"  Time elapsed: {elapsed:.2f}s")
-        print(f"  Average time per domain: {elapsed/len(domains):.3f}s")
+        print(f"  Average time per domain: {elapsed / len(domains):.3f}s")
 
         # Verify all results are valid
         for result in results:
@@ -250,7 +254,7 @@ class TestWhoisClient:
         print(f"  Total domains: {len(domains)}")
         print(f"  Successful checks: {len(results)}")
         print(f"  Time elapsed: {elapsed:.2f}s")
-        print(f"  Average time per domain: {elapsed/len(domains):.3f}s")
+        print(f"  Average time per domain: {elapsed / len(domains):.3f}s")
 
         # Verify all results are valid
         for result in results:
@@ -349,8 +353,8 @@ class TestDomainChecker:
         print(f"  Available: {available_count}")
         print(f"  Unavailable: {unavailable_count}")
         print(f"  Time elapsed: {elapsed:.2f}s")
-        print(f"  Average time per domain: {elapsed/len(domains):.3f}s")
-        print(f"  Domains per second: {len(domains)/elapsed:.2f}")
+        print(f"  Average time per domain: {elapsed / len(domains):.3f}s")
+        print(f"  Domains per second: {len(domains) / elapsed:.2f}")
 
         # Verify all results are valid
         for domain, result in results.items():
@@ -386,8 +390,8 @@ class TestDomainChecker:
         print(f"  Total domains: {len(domains)}")
         print(f"  Results obtained: {len(results)}")
         print(f"  Time elapsed: {elapsed:.2f}s")
-        print(f"  Average time per domain: {elapsed/len(domains):.3f}s")
-        print(f"  Domains per second: {len(domains)/elapsed:.2f}")
+        print(f"  Average time per domain: {elapsed / len(domains):.3f}s")
+        print(f"  Domains per second: {len(domains) / elapsed:.2f}")
 
     def test_domain_checker_with_whois_fallback(self):
         """Test DomainChecker with WHOIS fallback enabled."""
@@ -597,9 +601,9 @@ class TestRegisteredDomains:
         if available_count > 0:
             available_domains = [d for d, r in results.items() if r.available]
             print(f"  Incorrectly marked as available: {available_domains}")
-        print(f"  Accuracy: {unavailable_count/len(results)*100:.1f}%")
+        print(f"  Accuracy: {unavailable_count / len(results) * 100:.1f}%")
         print(f"  Time elapsed: {elapsed:.2f}s")
-        print(f"  Average time per domain: {elapsed/len(domains):.3f}s")
+        print(f"  Average time per domain: {elapsed / len(domains):.3f}s")
 
         # Verify all results are valid
         for domain, result in results.items():

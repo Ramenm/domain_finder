@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -19,10 +17,14 @@ class Settings(BaseSettings):
     )
 
     # LLM Provider API Keys
-    api_key_openai: Optional[str] = Field(default=None, alias="OPENAI_API_KEY")
+    api_key_openai: str | None = Field(default=None, alias="OPENAI_API_KEY")
 
     # Domain checking preferences
     use_rdap: bool = Field(default=True, alias="USE_RDAP")
+    registry_profile_file: str = Field(
+        default=".domain_finder_registry_profiles.sqlite3",
+        alias="REGISTRY_PROFILE_FILE",
+    )
 
     # Default LLM settings
     default_provider: str = Field(default="openai", alias="DEFAULT_PROVIDER")
@@ -47,7 +49,7 @@ class Settings(BaseSettings):
     max_concurrent_llm_requests: int = Field(default=8, alias="MAX_CONCURRENT_LLM_REQUESTS")
     enable_streaming: bool = Field(default=False, alias="ENABLE_STREAMING")
 
-    def get_api_key(self, provider: str) -> Optional[str]:
+    def get_api_key(self, provider: str) -> str | None:
         """Get API key for the specified provider."""
         provider_lower = provider.lower().strip()
         if provider_lower == "openai":
@@ -64,4 +66,3 @@ class Settings(BaseSettings):
     def get_openai_base_url(self) -> str:
         """Get OpenAI base URL (supports custom endpoints)."""
         return self.openai_base_url
-
