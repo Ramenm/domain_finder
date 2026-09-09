@@ -60,7 +60,7 @@ class RunDomainSearchUseCase:
             request: Domain search request parameters
 
         Returns:
-            Domain search result with statistics and available domains
+            Domain search result with statistics and checked domains
         """
         # Clear cache if requested
         if request.clear_cache and isinstance(self.repository, CacheManager):
@@ -181,7 +181,7 @@ class RunDomainSearchUseCase:
                     if isinstance(self.repository, CacheManager):
                         self.repository.save()
 
-                    # Collect available domains
+                    # Collect confirmed registrable domains
                     newly_available: list[str] = []
                     to_write = []
                     checked_count = 0

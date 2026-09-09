@@ -20,13 +20,13 @@ def wizard() -> None:
     )
     iterations = typer.prompt("🔄 Number of iterations", default=5)
     per_request = typer.prompt("📊 Number of domains to request per iteration", default=100)
-    llm_workers = typer.prompt("⚡ Number of parallel LLM requests per iteration", default=1)
+    llm_workers = typer.prompt("Number of parallel LLM requests per iteration", default=1)
     tld = typer.prompt(
         "🌐 Top-level domains (comma-separated, without dot, e.g.: com, io, ai)", default="com"
     )
-    provider = typer.prompt("🤖 LLM provider", default="openai")
+    provider = typer.prompt("LLM provider", default="openai")
     model = typer.prompt("🎯 Model (press Enter for default value)", default="")
-    use_rdap_str = typer.prompt("🔍 Use RDAP for checking? (y/n)", default="y")
+    use_rdap_str = typer.prompt("Use RDAP for checking? (y/n)", default="y")
     whois_fallback = typer.prompt(
         "🔄 Use WHOIS as fallback method if RDAP is uncertain? (y/n)", default="n"
     )

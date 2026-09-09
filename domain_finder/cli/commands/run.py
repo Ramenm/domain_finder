@@ -163,7 +163,9 @@ def run(
     ),
     clear_cache: bool = typer.Option(False, "--clear-cache", help="Clear cache before starting."),
     results_txt: str = typer.Option(
-        "results.txt", "--results", help="Path to file for saving available domains (.txt)."
+        "results.txt",
+        "--results",
+        help="Path to file for saving confirmed registrable domains (.txt).",
     ),
     results_csv: str | None = typer.Option(
         "results.csv", "--results-csv", help="Path to file for saving CSV report with results."
@@ -171,11 +173,11 @@ def run(
     skip_check: bool = typer.Option(
         False,
         "--skip-check",
-        help="Skip availability check (RDAP/WHOIS) and save only generated domains.",
+        help="Skip registry-state checking and save only generated domains.",
     ),
 ) -> None:
     """
-    Main workflow: domain generation -> filtering/normalization -> availability check -> result saving.
+    Main workflow: domain generation -> filtering/normalization -> registry-state check -> result saving.
     """
     _header()
 

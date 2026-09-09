@@ -69,7 +69,7 @@ class ResultRepositoryPort(ABC):
     @abstractmethod
     def save_available_domains(self, domains: list[DomainCheckResult]) -> None:
         """
-        Save available domains to persistent storage.
+        Save confirmed registrable domains to persistent storage.
 
         Args:
             domains: List of available domain check results

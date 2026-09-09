@@ -1,1 +1,1 @@
-"""Domain availability checking implementations."""
+"""Domain registry-state checking implementations."""

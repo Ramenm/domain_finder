@@ -14,7 +14,7 @@ class ProviderError(DomainError):
 
 
 class DomainCheckError(DomainError):
-    """Error related to domain availability checking."""
+    """Error related to domain registry-state checking."""
 
     pass
 

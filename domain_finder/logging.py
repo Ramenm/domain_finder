@@ -20,7 +20,7 @@ def setup_logging(
     Args:
         level: Logging level (string or int)
         console: Optional Rich Console instance
-        enable_rich: Whether to use RichHandler for beautiful output
+        enable_rich: Whether to use RichHandler for console output
 
     Returns:
         Configured root logger
@@ -36,7 +36,7 @@ def setup_logging(
         root_logger.removeHandler(handler)
 
     if enable_rich:
-        # Use RichHandler for beautiful console output
+        # Use RichHandler for console output
         rich_console = console or Console(stderr=True)
         handler = RichHandler(
             console=rich_console,

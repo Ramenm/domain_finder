@@ -70,7 +70,7 @@ class DomainCheckStatus(str, Enum):
 
 
 class DomainCheckResult(BaseModel):
-    """Result of a domain availability check with explicit uncertainty."""
+    """Result of a domain registry-state check with explicit uncertainty."""
 
     domain: str = Field(..., description="Domain name that was checked")
     status: DomainCheckStatus | None = None

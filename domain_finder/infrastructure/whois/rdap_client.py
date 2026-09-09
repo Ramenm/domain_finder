@@ -1,4 +1,4 @@
-"""Authoritative RDAP client for domain availability checks."""
+"""Authoritative RDAP client for domain registry-state checks."""
 
 from __future__ import annotations
 

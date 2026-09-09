@@ -1,4 +1,4 @@
-"""Cheap deterministic quality scoring before expensive availability checks."""
+"""Cheap deterministic quality scoring before expensive registry checks."""
 
 from __future__ import annotations
 
