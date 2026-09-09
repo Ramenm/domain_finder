@@ -11,6 +11,9 @@ from domain_finder.domain.models import DomainCheckResult, DomainCheckStatus
     ("status", "available"),
     [
         (DomainCheckStatus.AVAILABLE, True),
+        (DomainCheckStatus.REGISTRABLE, True),
+        (DomainCheckStatus.UNREGISTERED, None),
+        (DomainCheckStatus.RESERVED, False),
         (DomainCheckStatus.REGISTERED, False),
         (DomainCheckStatus.UNKNOWN, None),
         (DomainCheckStatus.RATE_LIMITED, None),
@@ -24,7 +27,16 @@ def test_status_controls_availability(status: DomainCheckStatus, available: bool
         domain="example.com", status=status, source="rdap", checked_at=time.time()
     )
     assert result.available is available
-    assert result.is_definitive is (available is not None)
+    assert result.is_definitive is (
+        status
+        in {
+            DomainCheckStatus.AVAILABLE,
+            DomainCheckStatus.REGISTRABLE,
+            DomainCheckStatus.UNREGISTERED,
+            DomainCheckStatus.RESERVED,
+            DomainCheckStatus.REGISTERED,
+        }
+    )
 
 
 def test_legacy_boolean_result_is_inferred_for_compatibility() -> None:

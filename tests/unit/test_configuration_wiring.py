@@ -66,3 +66,24 @@ def test_registry_profile_file_is_wired_to_checker(tmp_path) -> None:
         assert checker.profile_store.path == profile_path
     finally:
         checker.close()
+
+
+def test_reserved_names_cache_file_is_wired_to_checker(tmp_path) -> None:
+    cache_path = tmp_path / "reserved-names.xml"
+    cfg = Settings.model_validate(
+        {
+            "REGISTRY_PROFILE_FILE": ":memory:",
+            "RESERVED_NAMES_CACHE_FILE": str(cache_path),
+        }
+    )
+    checker = _create_checker(
+        settings=cfg,
+        use_rdap=True,
+        whois_fallback=True,
+        max_workers=2,
+        dns_prefilter=False,
+    )
+    try:
+        assert checker.reserved_policy.cache_path == cache_path
+    finally:
+        checker.close()

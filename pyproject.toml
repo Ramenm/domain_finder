@@ -12,6 +12,7 @@ dependencies = [
   "python-whois>=0.9.4",
   "tenacity>=8.0.0",
   "dnspython>=2.8.0",
+  "defusedxml>=0.7.1",
 ]
 
 [project.optional-dependencies]

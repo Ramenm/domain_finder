@@ -26,7 +26,7 @@ def _header() -> None:
     title = "[bold cyan]Domain Finder[/] — domain name generator and checker"
     sub = (
         "[dim]Select an LLM provider (default: OpenAI), specify the topic, number of iterations, and domains per iteration.\n"
-        "Availability checking is performed via RDAP (fast and reliable).[/dim]"
+        "Registry state is checked via RDAP/WHOIS; registrability is reported separately.[/dim]"
     )
     console.print(Panel.fit(sub, title=title, border_style="cyan", box=box.ROUNDED))
 
@@ -92,6 +92,7 @@ def _create_checker(
         max_retries=settings.max_retries,
         dns_prefilter=dns_prefilter,
         registry_profile_file=settings.registry_profile_file,
+        reserved_names_cache_file=settings.reserved_names_cache_file,
     )
 
 
@@ -257,12 +258,18 @@ def run(
     table.add_column("Value", style="green")
     table.add_row("Iterations completed", str(result.total_iterations))
     table.add_row("Domains generated (unique)", str(result.total_generated))
-    table.add_row("Available domains found", str(result.total_available))
+    table.add_row("Confirmed registrable domains", str(result.total_available))
+    table.add_row("Unregistered (not purchase-confirmed)", str(result.total_unregistered))
     table.add_row("Results file (.txt)", result.results_txt)
     table.add_row("Results file (.csv)", result.results_csv or "—")
     console.print(table)
 
     if result.available_domains:
         ResultWriter.show_table(result.available_domains)
+    if result.unregistered_domains:
+        ResultWriter.show_table(
+            result.unregistered_domains,
+            title="Unregistered Domains (registrability not confirmed)",
+        )
 
     console.print("[green]✓ Search completed successfully.[/green]")

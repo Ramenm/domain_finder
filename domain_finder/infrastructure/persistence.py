@@ -77,16 +77,11 @@ class ResultWriter:
         self.append_available(available_records)
 
     @staticmethod
-    def show_table(available: list[str]) -> None:
-        """
-        Display available domains in a formatted table.
-
-        Args:
-            available: List of available domain names
-        """
-        table = Table(title="Found Available Domains", show_lines=True, box=box.ROUNDED)
+    def show_table(domains: list[str], title: str = "Confirmed Registrable Domains") -> None:
+        """Display a list of domain names in a formatted table."""
+        table = Table(title=title, show_lines=True, box=box.ROUNDED)
         table.add_column("#", justify="right", style="cyan")
         table.add_column("Domain", justify="left", style="green")
-        for i, domain in enumerate(available, start=1):
+        for i, domain in enumerate(domains, start=1):
             table.add_row(str(i), domain)
         console.print(table)

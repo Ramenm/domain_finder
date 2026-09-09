@@ -20,6 +20,7 @@ from domain_finder.infrastructure.whois.rdap_bootstrap import RdapBootstrap
 from domain_finder.infrastructure.whois.rdap_client import RdapClient
 from domain_finder.infrastructure.whois.registry_dns import RegistryDnsResolver
 from domain_finder.infrastructure.whois.registry_profiles import RegistryProfileStore
+from domain_finder.infrastructure.whois.reserved_policy import ReservedNamePolicy
 from domain_finder.infrastructure.whois.whois_client import WhoisClient
 
 console = Console()
@@ -52,6 +53,8 @@ class DomainChecker(DomainCheckerPort):
         bootstrap_cache_file: str = ".rdap_dns_bootstrap.json",
         registry_profile_file: str | None = None,
         profile_store: RegistryProfileStore | None = None,
+        reserved_names_cache_file: str = ".icann_reserved_names.xml",
+        reserved_policy: ReservedNamePolicy | None = None,
     ) -> None:
         self.prefer_rdap = prefer_rdap
         self.whois_fallback = whois_fallback
@@ -89,6 +92,10 @@ class DomainChecker(DomainCheckerPort):
                 max_keepalive_connections=max_keepalive_connections,
             ),
             http2=http2,
+        )
+        self.reserved_policy = reserved_policy or ReservedNamePolicy(
+            cache_path=reserved_names_cache_file,
+            http_client=self._http_client,
         )
         bootstrap = RdapBootstrap(
             cache_path=bootstrap_cache_file,
@@ -166,6 +173,29 @@ class DomainChecker(DomainCheckerPort):
             detail=str(exc),
         )
 
+    def _apply_reserved_policy(self, result: DomainCheckResult) -> DomainCheckResult:
+        """Let explicit registry policy override absence/registrability evidence."""
+        if result.status not in {
+            DomainCheckStatus.UNREGISTERED,
+            DomainCheckStatus.REGISTRABLE,
+        }:
+            return result
+        try:
+            match = self.reserved_policy.match(result.domain)
+        except Exception:  # noqa: BLE001
+            return result
+        if match is None:
+            return result
+        return DomainCheckResult(
+            domain=result.domain,
+            status=DomainCheckStatus.RESERVED,
+            source="policy",
+            checked_at=time.time(),
+            detail=match.detail,
+            latency_ms=result.latency_ms,
+            retries=result.retries,
+        )
+
     def _whois_supports_availability(self, domain: str) -> bool:
         checker = getattr(self.whois_client, "supports_availability", None)
         return bool(checker(domain)) if callable(checker) else True
@@ -202,7 +232,7 @@ class DomainChecker(DomainCheckerPort):
 
         if not self.prefer_rdap:
             try:
-                return self._whois_checked(domain)
+                return self._apply_reserved_policy(self._whois_checked(domain))
             except Exception as exc:  # noqa: BLE001
                 return self._network_error(domain, "whois", exc)
 
@@ -221,12 +251,14 @@ class DomainChecker(DomainCheckerPort):
                     except Exception:  # noqa: BLE001
                         whois_fast = None
                     if whois_fast is not None and whois_fast.is_definitive:
-                        return whois_fast
+                        return self._apply_reserved_policy(whois_fast)
 
         try:
             rdap_result = self._rdap_checked(domain)
         except Exception as exc:  # noqa: BLE001
             rdap_result = self._network_error(domain, "rdap", exc)
+
+        rdap_result = self._apply_reserved_policy(rdap_result)
 
         if rdap_result.is_definitive and not self.whois_verify:
             return rdap_result
@@ -245,7 +277,7 @@ class DomainChecker(DomainCheckerPort):
             return self._late_dns_registered(domain) or rdap_result
 
         try:
-            whois_result = self._whois_checked(domain)
+            whois_result = self._apply_reserved_policy(self._whois_checked(domain))
         except Exception:  # noqa: BLE001
             return self._late_dns_registered(domain) or rdap_result
 

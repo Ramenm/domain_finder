@@ -68,9 +68,13 @@ class CacheManager(ResultRepositoryPort):
             self._conn.commit()
 
     def _ttl_for(self, status: DomainCheckStatus) -> float:
-        if status is DomainCheckStatus.AVAILABLE:
+        if status in {
+            DomainCheckStatus.AVAILABLE,
+            DomainCheckStatus.REGISTRABLE,
+            DomainCheckStatus.UNREGISTERED,
+        }:
             return self.available_ttl
-        if status is DomainCheckStatus.REGISTERED:
+        if status in {DomainCheckStatus.REGISTERED, DomainCheckStatus.RESERVED}:
             return self.registered_ttl
         return self.error_ttl
 
@@ -113,7 +117,7 @@ class CacheManager(ResultRepositoryPort):
                                 domain=str(domain),
                                 status=status,
                                 source=source
-                                if source in {"rdap", "whois", "dns", "cache", "unknown"}
+                                if source in {"rdap", "whois", "dns", "cache", "policy", "unknown"}
                                 else "unknown",
                                 checked_at=checked_at,
                             )
@@ -189,7 +193,7 @@ class CacheManager(ResultRepositoryPort):
 
     def save_available_domains(self, domains: list[DomainCheckResult]) -> None:
         for item in domains:
-            if item.status is DomainCheckStatus.AVAILABLE:
+            if item.is_registrable:
                 self.cache_result(item)
 
     def clear(self) -> None:
@@ -205,14 +209,34 @@ class CacheManager(ResultRepositoryPort):
                 """
                 SELECT domain, status, source, checked_at
                 FROM domain_cache
-                WHERE status IN (?, ?)
+                WHERE status IN (?, ?, ?, ?, ?)
                 """,
-                (DomainCheckStatus.AVAILABLE.value, DomainCheckStatus.REGISTERED.value),
+                (
+                    DomainCheckStatus.AVAILABLE.value,
+                    DomainCheckStatus.REGISTRABLE.value,
+                    DomainCheckStatus.UNREGISTERED.value,
+                    DomainCheckStatus.RESERVED.value,
+                    DomainCheckStatus.REGISTERED.value,
+                ),
             ).fetchall()
             self._conn.commit()
+
+        def legacy_available(status_value: str) -> bool | None:
+            if status_value in {
+                DomainCheckStatus.AVAILABLE.value,
+                DomainCheckStatus.REGISTRABLE.value,
+            }:
+                return True
+            if status_value in {
+                DomainCheckStatus.REGISTERED.value,
+                DomainCheckStatus.RESERVED.value,
+            }:
+                return False
+            return None
+
         return {
             str(row["domain"]): CacheEntry(
-                available=str(row["status"]) == DomainCheckStatus.AVAILABLE.value,
+                available=legacy_available(str(row["status"])),
                 source=str(row["source"]),
                 checked_at=float(row["checked_at"]),
             )

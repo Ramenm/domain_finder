@@ -31,13 +31,13 @@ def test_200_domain_object_is_registered() -> None:
     assert result.available is False
 
 
-def test_json_404_from_authoritative_registry_is_available() -> None:
+def test_json_404_from_authoritative_registry_is_unregistered() -> None:
     client = make_client(
         lambda req: httpx.Response(404, json={"errorCode": 404, "title": "Not Found"})
     )
     result = client.check_domain("unlikely-example.com")
-    assert result.status is DomainCheckStatus.AVAILABLE
-    assert result.available is True
+    assert result.status is DomainCheckStatus.UNREGISTERED
+    assert result.available is None
 
 
 def test_ambiguous_html_404_is_not_treated_as_available() -> None:
@@ -47,7 +47,7 @@ def test_ambiguous_html_404_is_not_treated_as_available() -> None:
     assert result.available is None
 
 
-def test_reserved_404_is_registered_not_available() -> None:
+def test_reserved_404_is_reserved_not_available() -> None:
     client = make_client(
         lambda req: httpx.Response(
             404,
@@ -59,7 +59,8 @@ def test_reserved_404_is_registered_not_available() -> None:
         )
     )
     result = client.check_domain("reserved.example")
-    assert result.status is DomainCheckStatus.REGISTERED
+    assert result.status is DomainCheckStatus.RESERVED
+    assert result.available is False
 
 
 def test_wrong_domain_object_is_inconclusive() -> None:
@@ -119,7 +120,7 @@ def test_transient_503_recovers_on_retry() -> None:
         return httpx.Response(404, json={"errorCode": 404, "title": "Not Found"})
 
     result = make_client(handler, retries=2).check_domain("freshname.com")
-    assert result.status is DomainCheckStatus.AVAILABLE
+    assert result.status is DomainCheckStatus.UNREGISTERED
     assert result.retries == 1
 
 
@@ -135,11 +136,11 @@ def test_redirect_is_followed() -> None:
     assert result.status is DomainCheckStatus.REGISTERED
 
 
-def test_authoritative_plain_404_is_available() -> None:
+def test_authoritative_plain_404_is_unregistered() -> None:
     client = make_client(lambda req: httpx.Response(404, text="Not Found"))
     result = client.check_domain("unlikely-example.com")
-    assert result.status is DomainCheckStatus.AVAILABLE
-    assert result.available is True
+    assert result.status is DomainCheckStatus.UNREGISTERED
+    assert result.available is None
 
 
 def test_429_reports_rate_limit_before_returning() -> None:

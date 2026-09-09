@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 @dataclass
@@ -48,5 +48,7 @@ class DomainSearchResult(BaseModel):
     total_generated: int
     total_available: int
     available_domains: list[str]
+    total_unregistered: int = 0
+    unregistered_domains: list[str] = Field(default_factory=list)
     results_txt: str
     results_csv: str | None = None

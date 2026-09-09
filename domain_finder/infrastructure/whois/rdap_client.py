@@ -207,7 +207,7 @@ class RdapClient:
                     if self._reserved_or_blocked(error_text):
                         return self._result(
                             normalized,
-                            DomainCheckStatus.REGISTERED,
+                            DomainCheckStatus.RESERVED,
                             started,
                             attempt - 1,
                             error_text,
@@ -220,7 +220,7 @@ class RdapClient:
                     # RDAP conformance test treats a 4xx response here as the
                     # expected signal for a non-existent domain object.
                     return self._result(
-                        normalized, DomainCheckStatus.AVAILABLE, started, attempt - 1
+                        normalized, DomainCheckStatus.UNREGISTERED, started, attempt - 1
                     )
 
                 quota_limited = status_code == 403 and any(

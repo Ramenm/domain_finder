@@ -1,13 +1,14 @@
 # Domain Finder
 
-⚡ **Domain name generator and checker using LLM with availability checking via RDAP/WHOIS.**
+⚡ **Domain name generator with registry-state and registrability checking via RDAP/WHOIS.**
 
-Domain Finder is a powerful CLI tool that leverages Large Language Models (LLMs) to generate creative domain name suggestions based on your topic, then automatically checks their availability using RDAP and WHOIS protocols. Perfect for finding available domains for your next project!
+Domain Finder generates domain suggestions with an LLM, checks authoritative registry state, and keeps `unregistered` separate from `registrable`. This avoids treating an RDAP/WHOIS “not found” response as a guarantee that a registrar can sell the name.
 
 ## Features
 
 - 🤖 **LLM-Powered Generation**: Uses OpenAI GPT models to generate creative domain name suggestions based on your topic
-- 🔍 **Availability Checking**: Fast and reliable domain availability checking via RDAP (preferred) with WHOIS fallback
+- 🔍 **Registry-State Checking**: Authoritative RDAP (preferred) with WHOIS fallback, explicit uncertainty, and separate registrability states
+- 🛡️ **Reserved-Name Policy**: `.com` contract reservations plus cached ICANN protected/reserved-name data
 - ⚡ **Parallel Processing**: Concurrent domain checking and LLM requests for maximum efficiency
 - 💾 **Smart Caching**: Caches domain check results to avoid redundant API calls
 - 📊 **Multiple Output Formats**: Export results to both TXT and CSV formats
@@ -68,6 +69,7 @@ OPENAI_BASE_URL=https://api.openai.com/v1
 # Optional: Domain Checking Preferences
 USE_RDAP=true
 REGISTRY_PROFILE_FILE=.domain_finder_registry_profiles.sqlite3
+RESERVED_NAMES_CACHE_FILE=.icann_reserved_names.xml
 
 # Optional: HTTP Settings
 HTTP_TIMEOUT=60.0
@@ -93,10 +95,23 @@ MAX_CONCURRENT_LLM_REQUESTS=8
 | `OPENAI_BASE_URL` | OpenAI API base URL | `https://api.openai.com/v1` |
 | `USE_RDAP` | Prefer RDAP over WHOIS | `true` |
 | `REGISTRY_PROFILE_FILE` | Persistent learned registry routing/latency profile | `.domain_finder_registry_profiles.sqlite3` |
+| `RESERVED_NAMES_CACHE_FILE` | Cached ICANN protected/reserved-name XML | `.icann_reserved_names.xml` |
 | `HTTP_TIMEOUT` | HTTP request timeout (seconds) | `60.0` |
 | `RDAP_TIMEOUT` | RDAP request timeout (seconds) | `10.0` |
 | `MAX_CONNECTIONS` | Maximum HTTP connections | `100` |
 | `MAX_CONCURRENT_LLM_REQUESTS` | Max parallel LLM requests | `8` |
+
+## Domain status semantics
+
+Domain Finder intentionally separates registry absence from purchase eligibility:
+
+- `REGISTERED`: an authoritative registry object exists.
+- `UNREGISTERED`: authoritative RDAP/WHOIS found no domain object; purchase is not yet guaranteed.
+- `RESERVED`: known registry/ICANN policy blocks ordinary registration.
+- `REGISTRABLE`: the registry/WHOIS response explicitly reports the name as available for registration.
+- `UNKNOWN`, `RATE_LIMITED`, `NETWORK_ERROR`, `UNSUPPORTED`, `INVALID`: no purchase claim is made.
+
+The CLI shows confirmed registrable domains separately from unregistered candidates. Registrar checkout/EPP remains the final purchase-time authority.
 
 ## Usage
 

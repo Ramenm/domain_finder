@@ -7,30 +7,32 @@ from domain_finder.infrastructure.whois.whois_evidence import classify_whois_tex
 
 
 @pytest.mark.parametrize(
-    "raw",
+    ("raw", "expected"),
     [
-        "Status: AVAILABLE",
-        "Status: free",
-        "Registration status: available",
-        "Domain not found.",
-        "No matching record.",
-        "% No match",
-        'No match for "candidate.test".',
-        "%ERROR:101: no entries found",
-        "Nothing found for this query.",
-        "No such domain",
-        "Domain is not registered",
-        "The domain candidate.test was not found.",
-        "The queried object does not exist: DOMAIN NOT FOUND",
-        "Domain candidate.test is available for registration",
-        "Domain Status: No Object Found",
-        "No_Se_Encontro_El_Objeto/Object_Not_Found",
+        ("Status: AVAILABLE", DomainCheckStatus.REGISTRABLE),
+        ("Status: free", DomainCheckStatus.REGISTRABLE),
+        ("Registration status: available", DomainCheckStatus.REGISTRABLE),
+        ("Domain not found.", DomainCheckStatus.UNREGISTERED),
+        ("No matching record.", DomainCheckStatus.UNREGISTERED),
+        ("% No match", DomainCheckStatus.UNREGISTERED),
+        ('No match for "candidate.test".', DomainCheckStatus.UNREGISTERED),
+        ("%ERROR:101: no entries found", DomainCheckStatus.UNREGISTERED),
+        ("Nothing found for this query.", DomainCheckStatus.UNREGISTERED),
+        ("No such domain", DomainCheckStatus.UNREGISTERED),
+        ("Domain is not registered", DomainCheckStatus.UNREGISTERED),
+        ("The domain candidate.test was not found.", DomainCheckStatus.UNREGISTERED),
+        ("The queried object does not exist: DOMAIN NOT FOUND", DomainCheckStatus.UNREGISTERED),
+        ("Domain candidate.test is available for registration", DomainCheckStatus.REGISTRABLE),
+        ("Domain Status: No Object Found", DomainCheckStatus.UNREGISTERED),
+        ("No_Se_Encontro_El_Objeto/Object_Not_Found", DomainCheckStatus.UNREGISTERED),
     ],
 )
-def test_explicit_authoritative_free_evidence_is_available(raw: str) -> None:
+def test_authoritative_absence_and_registrability_are_distinct(
+    raw: str, expected: DomainCheckStatus
+) -> None:
     evidence = classify_whois_text("candidate.test", raw)
     assert evidence is not None
-    assert evidence.status is DomainCheckStatus.AVAILABLE
+    assert evidence.status is expected
 
 
 @pytest.mark.parametrize(
@@ -60,10 +62,10 @@ def test_strong_registration_evidence_is_registered(raw: str) -> None:
     assert evidence.status is DomainCheckStatus.REGISTERED
 
 
-def test_has_not_been_registered_is_explicit_availability() -> None:
+def test_has_not_been_registered_is_explicit_absence() -> None:
     evidence = classify_whois_text(
         "candidate.hk",
         "The domain has not been registered.",
     )
     assert evidence is not None
-    assert evidence.status is DomainCheckStatus.AVAILABLE
+    assert evidence.status is DomainCheckStatus.UNREGISTERED

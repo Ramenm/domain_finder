@@ -94,7 +94,12 @@ class WhoisClient:
         evidence = classify_whois_text(domain, raw)
         if (
             evidence is not None
-            and evidence.status is DomainCheckStatus.AVAILABLE
+            and evidence.status
+            in {
+                DomainCheckStatus.AVAILABLE,
+                DomainCheckStatus.REGISTRABLE,
+                DomainCheckStatus.UNREGISTERED,
+            }
             and self.profile_store is not None
         ):
             self.profile_store.record_whois_probe(tld, evidence.status, evidence.code)
@@ -164,7 +169,7 @@ class WhoisClient:
             parser_available = self._parsed_explicitly_available(status_text)
             if parser_available or (
                 parsed_evidence is not None
-                and parsed_evidence.status is DomainCheckStatus.AVAILABLE
+                and parsed_evidence.status is DomainCheckStatus.REGISTRABLE
             ):
                 evidence_code = (
                     parsed_evidence.code
@@ -173,11 +178,23 @@ class WhoisClient:
                 )
                 if self.profile_store is not None:
                     self.profile_store.record_whois_probe(
-                        tld, DomainCheckStatus.AVAILABLE, evidence_code
+                        tld, DomainCheckStatus.REGISTRABLE, evidence_code
                     )
                 return result(
-                    DomainCheckStatus.AVAILABLE,
-                    "WHOIS parser reported explicit availability",
+                    DomainCheckStatus.REGISTRABLE,
+                    "WHOIS parser reported explicit registrability",
+                )
+            if (
+                parsed_evidence is not None
+                and parsed_evidence.status is DomainCheckStatus.UNREGISTERED
+            ):
+                if self.profile_store is not None:
+                    self.profile_store.record_whois_probe(
+                        tld, DomainCheckStatus.UNREGISTERED, parsed_evidence.code
+                    )
+                return result(
+                    DomainCheckStatus.UNREGISTERED,
+                    "WHOIS parser reported domain absence",
                 )
 
             strong_registered = bool(
@@ -201,14 +218,20 @@ class WhoisClient:
         except Exception as exc:  # noqa: BLE001
             message = str(exc)
             evidence = classify_whois_text(domain, message)
-            if evidence is not None and evidence.status is DomainCheckStatus.AVAILABLE:
+            if evidence is not None and evidence.status in {
+                DomainCheckStatus.REGISTRABLE,
+                DomainCheckStatus.UNREGISTERED,
+            }:
                 if self.profile_store is not None:
-                    self.profile_store.record_whois_probe(
-                        tld, DomainCheckStatus.AVAILABLE, evidence.code
-                    )
+                    self.profile_store.record_whois_probe(tld, evidence.status, evidence.code)
+                detail_kind = (
+                    "registrability"
+                    if evidence.status is DomainCheckStatus.REGISTRABLE
+                    else "domain absence"
+                )
                 return result(
-                    DomainCheckStatus.AVAILABLE,
-                    f"WHOIS reported explicit availability ({evidence.code})",
+                    evidence.status,
+                    f"WHOIS reported explicit {detail_kind} ({evidence.code})",
                 )
             original_status = DomainCheckStatus.NETWORK_ERROR
             original_detail = message[:512]

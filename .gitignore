@@ -140,3 +140,6 @@ Thumbs.db
 .rdap_dns_bootstrap.json
 .rdap_dns_bootstrap.json.tmp
 benchmark-results*/
+
+.icann_reserved_names.xml
+.icann_reserved_names.xml.tmp

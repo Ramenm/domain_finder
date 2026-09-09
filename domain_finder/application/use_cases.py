@@ -8,7 +8,7 @@ import time
 
 from domain_finder.application.dto import DomainSearchRequest, DomainSearchResult
 from domain_finder.domain.errors import ProviderError
-from domain_finder.domain.models import DomainCandidate, DomainSearchParams
+from domain_finder.domain.models import DomainCandidate, DomainCheckStatus, DomainSearchParams
 from domain_finder.domain.ports import DomainCheckerPort, DomainProviderPort, ResultRepositoryPort
 from domain_finder.domain.scoring import DomainQualityScorer
 from domain_finder.domain.services import DomainCheckService, DomainGeneratorService
@@ -69,6 +69,7 @@ class RunDomainSearchUseCase:
         # Session containers and truthful iteration metrics.
         all_suggested: list[str] = []
         all_available: list[str] = []
+        all_unregistered: list[str] = []
         iterations_attempted = 0
         iterations_completed = 0
         iterations_failed = 0
@@ -197,13 +198,20 @@ class RunDomainSearchUseCase:
 
                     for domain, result in results.items():
                         checked_count += 1
-                        if result.available:
+                        if result.is_registrable:
                             available_count += 1
                             newly_available.append(domain)
                             to_write.append((domain, result.source, result.checked_at))
+                        elif result.status is DomainCheckStatus.UNREGISTERED:
+                            all_unregistered.append(domain)
+                            logger.debug(
+                                f"Domain {domain} is unregistered but registrability is not confirmed "
+                                f"(source: {result.source})"
+                            )
                         else:
                             logger.debug(
-                                f"Domain {domain} is unavailable (source: {result.source})"
+                                f"Domain {domain} is not registrable (status: {result.status}, "
+                                f"source: {result.source})"
                             )
 
                     # Debug: log statistics for this iteration
@@ -235,6 +243,8 @@ class RunDomainSearchUseCase:
             total_generated=len(set(all_suggested)),
             total_available=len(set(all_available)),
             available_domains=sorted(set(all_available)),
+            total_unregistered=len(set(all_unregistered)),
+            unregistered_domains=sorted(set(all_unregistered)),
             results_txt=request.results_txt,
             results_csv=request.results_csv,
         )

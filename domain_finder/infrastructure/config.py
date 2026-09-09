@@ -25,6 +25,10 @@ class Settings(BaseSettings):
         default=".domain_finder_registry_profiles.sqlite3",
         alias="REGISTRY_PROFILE_FILE",
     )
+    reserved_names_cache_file: str = Field(
+        default=".icann_reserved_names.xml",
+        alias="RESERVED_NAMES_CACHE_FILE",
+    )
 
     # Default LLM settings
     default_provider: str = Field(default="openai", alias="DEFAULT_PROVIDER")

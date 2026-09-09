@@ -26,8 +26,13 @@ class RegistryProfile:
     updated_at: float
 
     @property
-    def whois_can_confirm_available(self) -> bool:
+    def whois_can_confirm_unregistered(self) -> bool:
         return self.whois_free_confirmations >= 2
+
+    @property
+    def whois_can_confirm_available(self) -> bool:
+        """Backward-compatible alias for learned domain-absence capability."""
+        return self.whois_can_confirm_unregistered
 
 
 class RegistryProfileStore:
@@ -154,12 +159,29 @@ class RegistryProfileStore:
                 "SELECT * FROM registry_profiles WHERE tld = ?", (key,)
             ).fetchone()
             assert row is not None
-            obs_col = f"{protocol}_observations"
-            ema_col = f"{protocol}_ema_ms"
-            observations = int(row[obs_col]) + 1
-            ema = row[ema_col]
+            if protocol == "rdap":
+                observations = int(row["rdap_observations"]) + 1
+                ema = row["rdap_ema_ms"]
+                update_sql = """
+                    UPDATE registry_profiles
+                    SET rdap_observations = ?, rdap_ema_ms = ?,
+                        rate_limits = ?, failures = ?, updated_at = ?
+                    WHERE tld = ?
+                """
+            else:
+                observations = int(row["whois_observations"]) + 1
+                ema = row["whois_ema_ms"]
+                update_sql = """
+                    UPDATE registry_profiles
+                    SET whois_observations = ?, whois_ema_ms = ?,
+                        rate_limits = ?, failures = ?, updated_at = ?
+                    WHERE tld = ?
+                """
             if latency_ms is not None and status in {
                 DomainCheckStatus.AVAILABLE,
+                DomainCheckStatus.REGISTRABLE,
+                DomainCheckStatus.UNREGISTERED,
+                DomainCheckStatus.RESERVED,
                 DomainCheckStatus.REGISTERED,
             }:
                 ema = self._ema(float(ema) if ema is not None else None, float(latency_ms))
@@ -169,12 +191,7 @@ class RegistryProfileStore:
                 status in {DomainCheckStatus.NETWORK_ERROR, DomainCheckStatus.UNKNOWN}
             )
             self._conn.execute(
-                f"""
-                UPDATE registry_profiles
-                SET {obs_col} = ?, {ema_col} = ?,
-                    rate_limits = ?, failures = ?, updated_at = ?
-                WHERE tld = ?
-                """,
+                update_sql,
                 (observations, ema, rate_limits, failures, self._clock(), key),
             )
             self._conn.commit()
@@ -194,7 +211,15 @@ class RegistryProfileStore:
             ).fetchone()
             assert row is not None
             confirmations = int(row["whois_free_confirmations"])
-            if status is DomainCheckStatus.AVAILABLE and evidence_code:
+            if (
+                status
+                in {
+                    DomainCheckStatus.AVAILABLE,
+                    DomainCheckStatus.REGISTRABLE,
+                    DomainCheckStatus.UNREGISTERED,
+                }
+                and evidence_code
+            ):
                 confirmations += 1
             self._conn.execute(
                 """

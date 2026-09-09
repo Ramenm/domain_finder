@@ -18,24 +18,32 @@ def test_whois_exception_is_inconclusive(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 @pytest.mark.parametrize(
-    ("domain", "message"),
+    ("domain", "message", "expected"),
     [
-        ("free-example.io", "Domain not found."),
-        ("free-example.de", "Domain: free-example.de\nStatus: free"),
-        ("free-example.be", "Domain:\tfree-example.be\r\nStatus:\tAVAILABLE"),
-        ("free-example.ru", "No entries found for the selected source(s)."),
+        ("free-example.io", "Domain not found.", DomainCheckStatus.UNREGISTERED),
+        ("free-example.de", "Domain: free-example.de\nStatus: free", DomainCheckStatus.REGISTRABLE),
+        (
+            "free-example.be",
+            "Domain:\tfree-example.be\r\nStatus:\tAVAILABLE",
+            DomainCheckStatus.REGISTRABLE,
+        ),
+        (
+            "free-example.ru",
+            "No entries found for the selected source(s).",
+            DomainCheckStatus.UNREGISTERED,
+        ),
     ],
 )
-def test_verified_registry_free_markers_are_available(
-    monkeypatch: pytest.MonkeyPatch, domain: str, message: str
+def test_verified_registry_absence_markers_are_classified(
+    monkeypatch: pytest.MonkeyPatch, domain: str, message: str, expected: DomainCheckStatus
 ) -> None:
     def fail(_domain: str):
         raise RuntimeError(message)
 
     monkeypatch.setattr("domain_finder.infrastructure.whois.whois_client.whois.whois", fail)
     result = WhoisClient().check_domain(domain)
-    assert result.status is DomainCheckStatus.AVAILABLE
-    assert result.available is True
+    assert result.status is expected
+    assert result.available is (True if expected is DomainCheckStatus.REGISTRABLE else None)
 
 
 def test_ambiguous_us_no_data_marker_is_not_treated_as_available(
@@ -79,13 +87,14 @@ def test_empty_parser_response_never_proves_availability(
     assert result.available is None
 
 
-def test_ai_domain_not_found_marker_is_available(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ai_domain_not_found_marker_is_unregistered(monkeypatch: pytest.MonkeyPatch) -> None:
     def fail(_domain: str):
         raise RuntimeError("Domain not found.")
 
     monkeypatch.setattr("domain_finder.infrastructure.whois.whois_client.whois.whois", fail)
     result = WhoisClient().check_domain("candidate.ai")
-    assert result.status is DomainCheckStatus.AVAILABLE
+    assert result.status is DomainCheckStatus.UNREGISTERED
+    assert result.available is None
 
 
 def test_raw_whois_recovers_free_eu_from_empty_library_result(
@@ -100,7 +109,7 @@ def test_raw_whois_recovers_free_eu_from_empty_library_result(
         lambda _domain: "Domain: candidate.eu\nStatus: AVAILABLE",
     )
     result = WhoisClient(raw_fallback=True).check_domain("candidate.eu")
-    assert result.status is DomainCheckStatus.AVAILABLE
+    assert result.status is DomainCheckStatus.REGISTRABLE
     assert result.available is True
 
 
@@ -116,7 +125,8 @@ def test_raw_whois_recovers_free_se_after_library_error(
         lambda _domain: '# domain "candidate.se" not found.',
     )
     result = WhoisClient(raw_fallback=True).check_domain("candidate.se")
-    assert result.status is DomainCheckStatus.AVAILABLE
+    assert result.status is DomainCheckStatus.UNREGISTERED
+    assert result.available is None
 
 
 def test_raw_whois_does_not_guess_us_availability(
@@ -144,22 +154,22 @@ def test_unicode_domain_is_converted_to_ascii_wire_form() -> None:
 
 
 @pytest.mark.parametrize(
-    ("domain", "raw"),
+    ("domain", "raw", "expected"),
     [
-        ("candidate.am", "% No match"),
-        ("candidate.bg", "registration status: available"),
-        ("candidate.by", "object does not exist"),
-        ("candidate.ee", "Domain not found"),
-        ("candidate.hu", "Nincs talalat / No match"),
-        ("candidate.hr", "%ERROR: No entries found"),
-        ("candidate.cl", "candidate.cl: no entries found."),
-        ("candidate.kz", "*** Nothing found for this query."),
-        ("candidate.im", "The domain candidate.im was not found."),
-        ("candidate.lt", "Domain: candidate.lt Status: available"),
+        ("candidate.am", "% No match", DomainCheckStatus.UNREGISTERED),
+        ("candidate.bg", "registration status: available", DomainCheckStatus.REGISTRABLE),
+        ("candidate.by", "object does not exist", DomainCheckStatus.UNREGISTERED),
+        ("candidate.ee", "Domain not found", DomainCheckStatus.UNREGISTERED),
+        ("candidate.hu", "Nincs talalat / No match", DomainCheckStatus.UNREGISTERED),
+        ("candidate.hr", "%ERROR: No entries found", DomainCheckStatus.UNREGISTERED),
+        ("candidate.cl", "candidate.cl: no entries found.", DomainCheckStatus.UNREGISTERED),
+        ("candidate.kz", "*** Nothing found for this query.", DomainCheckStatus.UNREGISTERED),
+        ("candidate.im", "The domain candidate.im was not found.", DomainCheckStatus.UNREGISTERED),
+        ("candidate.lt", "Domain: candidate.lt Status: available", DomainCheckStatus.REGISTRABLE),
     ],
 )
 def test_more_authoritative_cc_tld_free_markers(
-    monkeypatch: pytest.MonkeyPatch, domain: str, raw: str
+    monkeypatch: pytest.MonkeyPatch, domain: str, raw: str, expected: DomainCheckStatus
 ) -> None:
     monkeypatch.setattr(
         "domain_finder.infrastructure.whois.whois_client.whois.whois",
@@ -170,26 +180,34 @@ def test_more_authoritative_cc_tld_free_markers(
         lambda _domain: raw,
     )
     result = WhoisClient(raw_fallback=True).check_domain(domain)
-    assert result.status is DomainCheckStatus.AVAILABLE
+    assert result.status is expected
 
 
 @pytest.mark.parametrize(
-    ("domain", "raw"),
+    ("domain", "raw", "expected"),
     [
-        ("candidate.lu", "% No such domain"),
-        ("candidate.lv", "Domain: candidate.lv Status: free"),
-        ("candidate.mk", "%ERROR:101: no entries found"),
-        ("candidate.pk", "Status: Not Registered, and may be available if valid Available: Yes."),
-        ("candidate.md", "No entries found [ No match for ]"),
-        ("candidate.rs", "%ERROR:103: Domain is not registered"),
-        ("candidate.si", "% No entries found for the selected source(s)."),
-        ("candidate.sk", "Domain not found."),
-        ("candidate.ve", "%ERROR:101: no entries found"),
-        ("candidate.cn", "No matching record."),
+        ("candidate.lu", "% No such domain", DomainCheckStatus.UNREGISTERED),
+        ("candidate.lv", "Domain: candidate.lv Status: free", DomainCheckStatus.REGISTRABLE),
+        ("candidate.mk", "%ERROR:101: no entries found", DomainCheckStatus.UNREGISTERED),
+        (
+            "candidate.pk",
+            "Status: Not Registered, and may be available if valid Available: Yes.",
+            DomainCheckStatus.REGISTRABLE,
+        ),
+        ("candidate.md", "No entries found [ No match for ]", DomainCheckStatus.UNREGISTERED),
+        ("candidate.rs", "%ERROR:103: Domain is not registered", DomainCheckStatus.UNREGISTERED),
+        (
+            "candidate.si",
+            "% No entries found for the selected source(s).",
+            DomainCheckStatus.UNREGISTERED,
+        ),
+        ("candidate.sk", "Domain not found.", DomainCheckStatus.UNREGISTERED),
+        ("candidate.ve", "%ERROR:101: no entries found", DomainCheckStatus.UNREGISTERED),
+        ("candidate.cn", "No matching record.", DomainCheckStatus.UNREGISTERED),
     ],
 )
 def test_additional_authoritative_cc_tld_free_markers(
-    monkeypatch: pytest.MonkeyPatch, domain: str, raw: str
+    monkeypatch: pytest.MonkeyPatch, domain: str, raw: str, expected: DomainCheckStatus
 ) -> None:
     monkeypatch.setattr(
         "domain_finder.infrastructure.whois.whois_client.whois.whois",
@@ -200,7 +218,7 @@ def test_additional_authoritative_cc_tld_free_markers(
         lambda _domain: raw,
     )
     result = WhoisClient(raw_fallback=True).check_domain(domain)
-    assert result.status is DomainCheckStatus.AVAILABLE
+    assert result.status is expected
 
 
 class WeakDomainOnlyWhois:
@@ -221,7 +239,7 @@ def test_parsed_available_status_wins_over_domain_name(
         lambda domain: WeakDomainOnlyWhois(domain, status="available"),
     )
     result = WhoisClient(raw_fallback=True).check_domain("candidate.lt")
-    assert result.status is DomainCheckStatus.AVAILABLE
+    assert result.status is DomainCheckStatus.REGISTRABLE
 
 
 def test_weak_domain_name_is_disambiguated_by_raw_free_response(
@@ -236,7 +254,7 @@ def test_weak_domain_name_is_disambiguated_by_raw_free_response(
         lambda domain: f"Domain Name: {domain}\nThe domain {domain} was not found.",
     )
     result = WhoisClient(raw_fallback=True).check_domain("candidate.im")
-    assert result.status is DomainCheckStatus.AVAILABLE
+    assert result.status is DomainCheckStatus.UNREGISTERED
 
 
 def test_weak_domain_name_can_be_confirmed_registered_by_raw_record(
@@ -298,7 +316,12 @@ def test_high_impact_tranco_cc_tld_free_markers(
         lambda _domain: raw,
     )
     result = WhoisClient(raw_fallback=True).check_domain(domain)
-    assert result.status is DomainCheckStatus.AVAILABLE
+    expected = (
+        DomainCheckStatus.REGISTRABLE
+        if domain == "candidate.my"
+        else DomainCheckStatus.UNREGISTERED
+    )
+    assert result.status is expected
 
 
 @pytest.mark.parametrize(
@@ -323,7 +346,7 @@ def test_kr_and_pe_authoritative_free_markers(
         lambda _domain: raw,
     )
     result = WhoisClient(raw_fallback=True).check_domain(domain)
-    assert result.status is DomainCheckStatus.AVAILABLE
+    assert result.status is DomainCheckStatus.UNREGISTERED
 
 
 def test_pe_parsed_no_object_found_wins_over_domain_name(
@@ -334,7 +357,7 @@ def test_pe_parsed_no_object_found_wins_over_domain_name(
         lambda domain: WeakDomainOnlyWhois(domain, status="No Object Found"),
     )
     result = WhoisClient(raw_fallback=True).check_domain("candidate.pe")
-    assert result.status is DomainCheckStatus.AVAILABLE
+    assert result.status is DomainCheckStatus.UNREGISTERED
 
 
 def test_raw_first_skips_parser_for_definitive_free_zone(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -351,7 +374,7 @@ def test_raw_first_skips_parser_for_definitive_free_zone(monkeypatch: pytest.Mon
         lambda _domain: "Domain: candidate.de Status: free",
     )
     result = WhoisClient(raw_fallback=True).check_domain("candidate.de")
-    assert result.status is DomainCheckStatus.AVAILABLE
+    assert result.status is DomainCheckStatus.REGISTRABLE
     assert parser_calls == 0
 
 
@@ -384,7 +407,7 @@ def test_unlisted_tld_uses_dynamic_iana_referral_for_explicit_free(
         lambda _domain: (_ for _ in ()).throw(AssertionError("raw should be enough")),
     )
     result = WhoisClient(raw_fallback=True).check_domain("candidate.zztest")
-    assert result.status is DomainCheckStatus.AVAILABLE
+    assert result.status is DomainCheckStatus.REGISTRABLE
 
 
 def test_supports_availability_is_discovered_from_iana_referral(
@@ -424,10 +447,10 @@ def test_raw_whois_records_dynamic_registry_profile(monkeypatch: pytest.MonkeyPa
         lambda _server, _query: "Domain not found.",
     )
     result = WhoisClient(raw_fallback=True, profile_store=profiles).check_domain("candidate.zztest")
-    assert result.status is DomainCheckStatus.AVAILABLE
+    assert result.status is DomainCheckStatus.UNREGISTERED
     assert profiles.routing == [("zztest", {"whois_server": "whois.registry.test"})]
-    assert profiles.probes == [("zztest", DomainCheckStatus.AVAILABLE, "domain_not_found")]
-    assert profiles.observations[0][0:3] == ("zztest", "whois", DomainCheckStatus.AVAILABLE)
+    assert profiles.probes == [("zztest", DomainCheckStatus.UNREGISTERED, "domain_not_found")]
+    assert profiles.observations[0][0:3] == ("zztest", "whois", DomainCheckStatus.UNREGISTERED)
 
 
 def test_parser_explicit_availability_records_registry_capability(
@@ -443,5 +466,5 @@ def test_parser_explicit_availability_records_registry_capability(
         lambda domain: WeakDomainOnlyWhois(domain, status="available"),
     )
     result = WhoisClient(raw_fallback=True, profile_store=profiles).check_domain("candidate.zztest")
-    assert result.status is DomainCheckStatus.AVAILABLE
-    assert profiles.probes == [("zztest", DomainCheckStatus.AVAILABLE, "parser_status_available")]
+    assert result.status is DomainCheckStatus.REGISTRABLE
+    assert profiles.probes == [("zztest", DomainCheckStatus.REGISTRABLE, "parser_status_available")]

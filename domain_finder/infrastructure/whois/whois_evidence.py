@@ -18,11 +18,14 @@ def _compact(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip().lower()
 
 
-_FREE_PATTERNS: tuple[tuple[str, str], ...] = (
+_REGISTRABLE_PATTERNS: tuple[tuple[str, str], ...] = (
     ("status_available", r"\bstatus\s*:\s*(?:available|free)\b"),
     ("registration_available", r"\bregistration status\s*:\s*available\b"),
     ("available_yes", r"\bavailable\s*:\s*yes\b"),
     ("domain_available", r"\bdomain\b.{0,160}\bis available for registration\b"),
+)
+
+_UNREGISTERED_PATTERNS: tuple[tuple[str, str], ...] = (
     ("domain_not_registered", r"\bdomain (?:is|has) not (?:been )?registered\b"),
     ("domain_not_found", r"\bdomain\b.{0,160}\bnot found\b"),
     ("requested_domain_not_found", r"\brequested domain was not found\b"),
@@ -63,9 +66,12 @@ def classify_whois_text(domain: str, text: str) -> WhoisEvidence | None:
     compact = _compact(text)
     blocked = any(marker in compact for marker in _AMBIGUOUS_BLOCKERS)
     if not blocked:
-        for code, pattern in _FREE_PATTERNS:
+        for code, pattern in _REGISTRABLE_PATTERNS:
             if re.search(pattern, compact, re.IGNORECASE):
-                return WhoisEvidence(DomainCheckStatus.AVAILABLE, code)
+                return WhoisEvidence(DomainCheckStatus.REGISTRABLE, code)
+        for code, pattern in _UNREGISTERED_PATTERNS:
+            if re.search(pattern, compact, re.IGNORECASE):
+                return WhoisEvidence(DomainCheckStatus.UNREGISTERED, code)
 
     try:
         ascii_domain = domain.strip().lower().rstrip(".").encode("idna").decode("ascii")

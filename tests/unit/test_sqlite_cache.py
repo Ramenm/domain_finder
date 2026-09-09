@@ -130,3 +130,15 @@ def test_search_request_defaults_to_sqlite_cache() -> None:
 
     request = DomainSearchRequest(topic="test")
     assert request.cache_file.endswith(".sqlite3")
+
+
+def test_known_preserves_registrability_semantics(tmp_path: Path) -> None:
+    cache = CacheManager(str(tmp_path / "cache.sqlite3"))
+    cache.cache_result(result("maybe.com", DomainCheckStatus.UNREGISTERED))
+    cache.cache_result(result("buyable.com", DomainCheckStatus.REGISTRABLE))
+    cache.cache_result(result("reserved.com", DomainCheckStatus.RESERVED))
+
+    known = cache.known()
+    assert known["maybe.com"].available is None
+    assert known["buyable.com"].available is True
+    assert known["reserved.com"].available is False

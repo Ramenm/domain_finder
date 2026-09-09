@@ -57,7 +57,10 @@ class DomainCandidate(BaseModel):
 class DomainCheckStatus(str, Enum):
     """Outcome of a domain availability lookup."""
 
-    AVAILABLE = "available"
+    AVAILABLE = "available"  # legacy positive signal; prefer REGISTRABLE
+    REGISTRABLE = "registrable"
+    UNREGISTERED = "unregistered"
+    RESERVED = "reserved"
     REGISTERED = "registered"
     UNKNOWN = "unknown"
     RATE_LIMITED = "rate_limited"
@@ -84,7 +87,7 @@ class DomainCheckResult(BaseModel):
     @classmethod
     def validate_source(cls, v: str) -> str:
         """Validate source value."""
-        if v not in ("rdap", "whois", "dns", "cache", "unknown"):
+        if v not in ("rdap", "whois", "dns", "cache", "policy", "unknown"):
             raise ValueError("Unsupported domain check source")
         return v
 
@@ -101,9 +104,9 @@ class DomainCheckResult(BaseModel):
             else:
                 self.status = DomainCheckStatus.UNKNOWN
 
-        if self.status is DomainCheckStatus.AVAILABLE:
+        if self.status in (DomainCheckStatus.AVAILABLE, DomainCheckStatus.REGISTRABLE):
             self.available = True
-        elif self.status is DomainCheckStatus.REGISTERED:
+        elif self.status in (DomainCheckStatus.REGISTERED, DomainCheckStatus.RESERVED):
             self.available = False
         else:
             self.available = None
@@ -111,8 +114,28 @@ class DomainCheckResult(BaseModel):
 
     @property
     def is_definitive(self) -> bool:
-        """Return whether the registry state is known definitively."""
-        return self.status in (DomainCheckStatus.AVAILABLE, DomainCheckStatus.REGISTERED)
+        """Return whether the registry/policy state is known definitively."""
+        return self.status in (
+            DomainCheckStatus.AVAILABLE,
+            DomainCheckStatus.REGISTRABLE,
+            DomainCheckStatus.UNREGISTERED,
+            DomainCheckStatus.RESERVED,
+            DomainCheckStatus.REGISTERED,
+        )
+
+    @property
+    def is_registrable(self) -> bool:
+        """Return True only for an explicit positive registration signal."""
+        return self.status in (DomainCheckStatus.AVAILABLE, DomainCheckStatus.REGISTRABLE)
+
+    @property
+    def is_unregistered(self) -> bool:
+        """Return whether no registered domain object exists."""
+        return self.status in (
+            DomainCheckStatus.AVAILABLE,
+            DomainCheckStatus.REGISTRABLE,
+            DomainCheckStatus.UNREGISTERED,
+        )
 
 
 class ProviderConfig(BaseModel):
@@ -159,6 +182,6 @@ class DomainSearchParams(BaseModel):
 class CacheEntry:
     """Entry in domain availability cache."""
 
-    available: bool
+    available: bool | None
     source: str
     checked_at: float
