@@ -42,6 +42,9 @@ def test_ci_runs_offline_tests_quality_and_keeps_live_network_separate() -> None
     assert "pytest" in text
     assert "pre-commit run --all-files" in text
     assert "pip-audit" in text
-    assert 'python-version: ["3.10", "3.12"]' in text
+    assert "uses: actions/checkout@v7" in text
+    assert "uses: actions/setup-python@v7" in text
+    assert 'python-version: ["3.10", "3.12", "3.14"]' in text
+    assert 'python-version: "3.14"' in text
     assert 'pytest -m "network and slow"' in text
     assert "github.event_name == 'schedule'" in text
