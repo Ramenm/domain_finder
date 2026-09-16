@@ -121,3 +121,23 @@ def test_summary_exposes_registered_reserved_and_inconclusive_counts(monkeypatch
     assert "Registered" in output
     assert "Reserved" in output
     assert "Inconclusive / errors" in output
+
+
+def test_keyboard_interrupt_is_reported_as_clean_cancellation(monkeypatch, capsys) -> None:
+    class InterruptingUseCase(FakeUseCase):
+        def execute(self, _request: DomainSearchRequest) -> DomainSearchResult:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(run_module, "_create_provider", lambda *_args, **_kwargs: FakeProvider())
+    monkeypatch.setattr(run_module, "_create_checker", lambda **_kwargs: object())
+    monkeypatch.setattr(run_module, "CacheManager", FakeCache)
+    monkeypatch.setattr(run_module, "ResultWriter", FakeWriter)
+    monkeypatch.setattr(run_module, "RunDomainSearchUseCase", InterruptingUseCase)
+
+    request = DomainSearchRequest(topic="test")
+    settings = Settings.model_validate({"OPENAI_API_KEY": "test-key"})  # pragma: allowlist secret
+    with pytest.raises(typer.Exit) as exc:
+        run_module._execute_request(request, settings)
+
+    assert exc.value.exit_code == 130
+    assert "cancelled" in capsys.readouterr().out.lower()

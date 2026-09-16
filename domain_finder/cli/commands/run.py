@@ -9,7 +9,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from domain_finder.application.dto import DomainSearchRequest
+from domain_finder.application.dto import DomainSearchRequest, SearchProgress
 from domain_finder.application.use_cases import RunDomainSearchUseCase
 from domain_finder.domain.errors import ProviderError
 from domain_finder.domain.models import ProviderConfig
@@ -97,6 +97,20 @@ def _create_checker(
     )
 
 
+def _show_progress(event: SearchProgress) -> None:
+    prefix = f"Iteration {event.iteration}/{event.iterations}"
+    if event.phase == "generation_start":
+        console.print(f"[dim]… {prefix}: generating domain candidates…[/dim]")
+    elif event.phase == "generation_complete":
+        console.print(f"[dim]✓ {prefix}: generated {event.count or 0} candidate(s).[/dim]")
+    elif event.phase == "checking_start":
+        console.print(f"[dim]… {prefix}: checking {event.count or 0} candidate(s)…[/dim]")
+    elif event.phase == "checking_complete":
+        console.print(f"[dim]✓ {prefix}: checked {event.count or 0} candidate(s).[/dim]")
+    elif event.phase == "generation_failed":
+        console.print(f"[yellow]⚠ {prefix}: generation failed; continuing if possible.[/yellow]")
+
+
 def _execute_request(request: DomainSearchRequest, settings: Settings) -> None:
     """Execute an already validated search request and render its result."""
     try:
@@ -135,10 +149,14 @@ def _execute_request(request: DomainSearchRequest, settings: Settings) -> None:
         checker=checker,
         repository=cache,
         writer=writer,
+        progress_callback=_show_progress,
     )
 
     try:
         result = use_case.execute(request)
+    except KeyboardInterrupt as e:
+        console.print("[yellow]⚠ Search cancelled by user.[/yellow]")
+        raise typer.Exit(code=130) from e
     except Exception as e:  # noqa: BLE001
         console.print(f"[red]✗ Execution error:[/] {e}")
         raise typer.Exit(code=1) from e

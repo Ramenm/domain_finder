@@ -5,8 +5,9 @@ from __future__ import annotations
 import concurrent.futures
 import math
 import time
+from collections.abc import Callable
 
-from domain_finder.application.dto import DomainSearchRequest, DomainSearchResult
+from domain_finder.application.dto import DomainSearchRequest, DomainSearchResult, SearchProgress
 from domain_finder.domain.errors import ProviderError
 from domain_finder.domain.models import (
     DomainCandidate,
@@ -39,6 +40,7 @@ class RunDomainSearchUseCase:
         checker: DomainCheckerPort,
         repository: ResultRepositoryPort,
         writer: ResultWriter,
+        progress_callback: Callable[[SearchProgress], None] | None = None,
     ) -> None:
         """
         Initialize use case.
@@ -56,6 +58,20 @@ class RunDomainSearchUseCase:
         self.generator_service = DomainGeneratorService(provider)
         self.check_service = DomainCheckService(checker, repository)
         self.quality_scorer = DomainQualityScorer()
+        self.progress_callback = progress_callback
+
+    def _emit_progress(
+        self,
+        phase: str,
+        iteration: int,
+        iterations: int,
+        count: int | None = None,
+        message: str | None = None,
+    ) -> None:
+        if self.progress_callback is not None:
+            self.progress_callback(
+                SearchProgress(phase, iteration, iterations, count=count, message=message)
+            )
 
     def execute(self, request: DomainSearchRequest) -> DomainSearchResult:
         """
@@ -103,12 +119,21 @@ class RunDomainSearchUseCase:
 
             for iteration in range(1, request.iterations + 1):
                 iterations_attempted += 1
+                self._emit_progress(
+                    "generation_start", iteration, request.iterations, count=request.per_request
+                )
                 # Wait for current generation to complete (if any)
                 if gen_future is not None:
                     try:
                         candidates = gen_future.result()
-                    except ProviderError:
+                    except ProviderError as exc:
                         iterations_failed += 1
+                        self._emit_progress(
+                            "generation_failed",
+                            iteration,
+                            request.iterations,
+                            message=str(exc),
+                        )
                         # Skip iteration on provider error
                         if iteration < request.iterations:
                             # Start next generation anyway
@@ -127,13 +152,22 @@ class RunDomainSearchUseCase:
                             search_params,
                             workers=request.llm_workers,
                         )
-                    except ProviderError:
+                    except ProviderError as exc:
                         iterations_failed += 1
+                        self._emit_progress(
+                            "generation_failed",
+                            iteration,
+                            request.iterations,
+                            message=str(exc),
+                        )
                         if request.cooldown > 0:
                             time.sleep(request.cooldown)
                         continue
 
                 iterations_completed += 1
+                self._emit_progress(
+                    "generation_complete", iteration, request.iterations, count=len(candidates)
+                )
 
                 # Filter out already seen domains
                 seen = set(all_suggested)
@@ -172,6 +206,9 @@ class RunDomainSearchUseCase:
                 else:
                     # Check domains - this runs in parallel with next generation
                     domain_names = [c.name for c in new_candidates]
+                    self._emit_progress(
+                        "checking_start", iteration, request.iterations, count=len(domain_names)
+                    )
                     check_future = pipeline_pool.submit(
                         self.check_service.check_domains_with_cache,
                         domain_names,
@@ -259,6 +296,9 @@ class RunDomainSearchUseCase:
                         )
 
                     self.writer.append_check_results(results.values())
+                    self._emit_progress(
+                        "checking_complete", iteration, request.iterations, count=len(results)
+                    )
                     if newly_available:
                         all_available.extend(newly_available)
 

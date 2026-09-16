@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
@@ -59,6 +61,17 @@ class DomainSearchRequest(BaseModel):
         if self.max_len < self.min_len:
             raise ValueError("max_len must be greater than or equal to min_len")
         return self
+
+
+@dataclass(frozen=True)
+class SearchProgress:
+    """Phase-level progress event for user-facing search feedback."""
+
+    phase: str
+    iteration: int
+    iterations: int
+    count: int | None = None
+    message: str | None = None
 
 
 class DomainSearchResult(BaseModel):
