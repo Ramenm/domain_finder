@@ -7,6 +7,7 @@ The checker distinguishes an unregistered domain from a domain that is explicitl
 ## Requirements
 
 - Python 3.10 or newer
+- CI continuously verifies CPython 3.10–3.14; Python 3.15 pre-releases are tested experimentally until 3.15 reaches GA.
 - An OpenAI API key, or an OpenAI-compatible API endpoint
 
 ## Install
