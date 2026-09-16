@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import typer
+from pydantic import ValidationError
 from rich import box
 from rich.console import Console
 from rich.panel import Panel
@@ -96,6 +97,75 @@ def _create_checker(
     )
 
 
+def _execute_request(request: DomainSearchRequest, settings: Settings) -> None:
+    """Execute an already validated search request and render its result."""
+    try:
+        llm_provider = _create_provider(
+            request.provider,
+            request.model,
+            request.temperature,
+            request.timeout,
+            settings,
+        )
+        provider_display = getattr(llm_provider, "display_name", request.provider)
+        console.print(
+            f"[green]✓ Provider:[/] {provider_display}  [green]Model:[/] {llm_provider.config.model}"
+        )
+    except ProviderError as e:
+        console.print(f"[red]✗ LLM provider initialization error:[/] {e}")
+        raise typer.Exit(code=2) from e
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[red]✗ Invalid provider parameters:[/] {e}")
+        raise typer.Exit(code=2) from e
+
+    cache = CacheManager(request.cache_file)
+    if request.clear_cache:
+        cache.clear()
+        console.print("[yellow]⚠ Cache cleared.[/yellow]")
+
+    writer = ResultWriter(txt_path=request.results_txt, csv_path=request.results_csv)
+    checker = _create_checker(
+        settings=settings,
+        use_rdap=request.use_rdap,
+        whois_fallback=request.whois_fallback,
+        max_workers=request.max_workers,
+    )
+    use_case = RunDomainSearchUseCase(
+        provider=llm_provider,
+        checker=checker,
+        repository=cache,
+        writer=writer,
+    )
+
+    try:
+        result = use_case.execute(request)
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[red]✗ Execution error:[/] {e}")
+        raise typer.Exit(code=1) from e
+
+    console.rule("[bold]Search Results[/bold]")
+    table = Table(title="Session Statistics", box=box.SIMPLE)
+    table.add_column("Parameter", style="cyan")
+    table.add_column("Value", style="green")
+    table.add_row("Iterations completed", str(result.total_iterations))
+    table.add_row("Domains generated (unique)", str(result.total_generated))
+    table.add_row("Confirmed registrable domains", str(result.total_available))
+    table.add_row("Unregistered (not purchase-confirmed)", str(result.total_unregistered))
+    table.add_row("Results file (.txt)", result.results_txt)
+    table.add_row("Results file (.csv)", result.results_csv or "—")
+    console.print(table)
+
+    if result.available_domains:
+        ResultWriter.show_table(result.available_domains)
+    if result.unregistered_domains:
+        ResultWriter.show_table(
+            result.unregistered_domains,
+            title="Unregistered Domains (registrability not confirmed)",
+        )
+
+    console.print("[green]✓ Search completed successfully.[/green]")
+
+
 def run(
     topic: str = typer.Option(
         ...,
@@ -184,97 +254,34 @@ def run(
     """
     _header()
 
-    # Load settings
     settings = Settings()
-    if use_rdap is None:
-        use_rdap = settings.use_rdap
-
-    # Create provider
+    resolved_use_rdap = settings.use_rdap if use_rdap is None else use_rdap
     try:
-        llm_provider = _create_provider(provider, model, temperature, timeout, settings)
-        provider_display = getattr(llm_provider, "display_name", provider)
-        console.print(
-            f"[green]✓ Provider:[/] {provider_display}  [green]Model:[/] {llm_provider.config.model}"
+        request = DomainSearchRequest(
+            topic=topic,
+            iterations=iterations,
+            per_request=per_request,
+            llm_workers=llm_workers,
+            tlds=tld,
+            provider=provider,
+            model=model,
+            temperature=temperature,
+            timeout=timeout,
+            use_rdap=resolved_use_rdap,
+            whois_fallback=whois_fallback,
+            max_workers=max_workers,
+            min_len=min_len,
+            max_len=max_len,
+            cooldown=cooldown,
+            cache_file=cache_file,
+            clear_cache=clear_cache,
+            results_txt=results_txt,
+            results_csv=results_csv,
+            skip_check=skip_check,
         )
-    except ProviderError as e:
-        console.print(f"[red]✗ LLM provider initialization error:[/] {e}")
-        raise typer.Exit(code=2) from e
-    except Exception as e:  # noqa: BLE001
-        console.print(f"[red]✗ Invalid provider parameters:[/] {e}")
+    except ValidationError as e:
+        message = e.errors()[0].get("msg", str(e))
+        console.print(f"[red]✗ Invalid input:[/] {message}")
         raise typer.Exit(code=2) from e
 
-    # Create infrastructure components
-    cache = CacheManager(cache_file)
-    if clear_cache:
-        cache.clear()
-        console.print("[yellow]⚠ Cache cleared.[/yellow]")
-
-    writer = ResultWriter(txt_path=results_txt, csv_path=results_csv)
-    checker = _create_checker(
-        settings=settings,
-        use_rdap=use_rdap,
-        whois_fallback=whois_fallback,
-        max_workers=max_workers,
-    )
-
-    # Create use case
-    use_case = RunDomainSearchUseCase(
-        provider=llm_provider,
-        checker=checker,
-        repository=cache,
-        writer=writer,
-    )
-
-    # Create request
-    request = DomainSearchRequest(
-        topic=topic,
-        iterations=iterations,
-        per_request=per_request,
-        llm_workers=llm_workers,
-        tlds=tld,
-        provider=provider,
-        model=model,
-        temperature=temperature,
-        timeout=timeout,
-        use_rdap=use_rdap,
-        whois_fallback=whois_fallback,
-        max_workers=max_workers,
-        min_len=min_len,
-        max_len=max_len,
-        cooldown=cooldown,
-        cache_file=cache_file,
-        clear_cache=clear_cache,
-        results_txt=results_txt,
-        results_csv=results_csv,
-        skip_check=skip_check,
-    )
-
-    # Execute use case
-    try:
-        result = use_case.execute(request)
-    except Exception as e:  # noqa: BLE001
-        console.print(f"[red]✗ Execution error:[/] {e}")
-        raise typer.Exit(code=1) from e
-
-    # Display results
-    console.rule("[bold]Search Results[/bold]")
-    table = Table(title="Session Statistics", box=box.SIMPLE)
-    table.add_column("Parameter", style="cyan")
-    table.add_column("Value", style="green")
-    table.add_row("Iterations completed", str(result.total_iterations))
-    table.add_row("Domains generated (unique)", str(result.total_generated))
-    table.add_row("Confirmed registrable domains", str(result.total_available))
-    table.add_row("Unregistered (not purchase-confirmed)", str(result.total_unregistered))
-    table.add_row("Results file (.txt)", result.results_txt)
-    table.add_row("Results file (.csv)", result.results_csv or "—")
-    console.print(table)
-
-    if result.available_domains:
-        ResultWriter.show_table(result.available_domains)
-    if result.unregistered_domains:
-        ResultWriter.show_table(
-            result.unregistered_domains,
-            title="Unregistered Domains (registrability not confirmed)",
-        )
-
-    console.print("[green]✓ Search completed successfully.[/green]")
+    _execute_request(request, settings)
