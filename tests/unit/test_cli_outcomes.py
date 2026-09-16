@@ -4,8 +4,10 @@ from types import SimpleNamespace
 
 import pytest
 import typer
+from typer.testing import CliRunner
 
 from domain_finder.application.dto import DomainSearchRequest, DomainSearchResult
+from domain_finder.cli.app import app
 from domain_finder.cli.commands import run as run_module
 from domain_finder.infrastructure.config import Settings
 
@@ -141,3 +143,51 @@ def test_keyboard_interrupt_is_reported_as_clean_cancellation(monkeypatch, capsy
 
     assert exc.value.exit_code == 130
     assert "cancelled" in capsys.readouterr().out.lower()
+
+
+def test_invalid_environment_is_concise_configuration_error(monkeypatch) -> None:
+    monkeypatch.setenv("MAX_RETRIES", "not-an-int")
+    result = CliRunner().invoke(app, ["run", "--topic", "test"])
+
+    assert result.exit_code == 2
+    assert "Invalid configuration" in result.output
+    assert "pydantic" not in result.output.lower()
+    assert "traceback" not in result.output.lower()
+
+
+def test_output_initialization_error_is_concise(monkeypatch, capsys) -> None:
+    class BrokenWriter:
+        def __init__(self, *_args, **_kwargs) -> None:
+            raise OSError("read-only destination")
+
+    monkeypatch.setattr(run_module, "_create_provider", lambda *_args, **_kwargs: FakeProvider())
+    monkeypatch.setattr(run_module, "CacheManager", FakeCache)
+    monkeypatch.setattr(run_module, "ResultWriter", BrokenWriter)
+
+    request = DomainSearchRequest(topic="test")
+    settings = Settings.model_validate({"OPENAI_API_KEY": "test-key"})  # pragma: allowlist secret
+    with pytest.raises(typer.Exit) as exc:
+        run_module._execute_request(request, settings)
+
+    output = capsys.readouterr().out
+    assert exc.value.exit_code == 2
+    assert "Cannot initialize" in output
+    assert "read-only destination" in output
+    assert "traceback" not in output.lower()
+
+
+def test_unexpected_programmer_error_is_not_masked(monkeypatch) -> None:
+    class BuggyUseCase(FakeUseCase):
+        def execute(self, _request: DomainSearchRequest) -> DomainSearchResult:
+            raise RuntimeError("programmer bug")
+
+    monkeypatch.setattr(run_module, "_create_provider", lambda *_args, **_kwargs: FakeProvider())
+    monkeypatch.setattr(run_module, "_create_checker", lambda **_kwargs: object())
+    monkeypatch.setattr(run_module, "CacheManager", FakeCache)
+    monkeypatch.setattr(run_module, "ResultWriter", FakeWriter)
+    monkeypatch.setattr(run_module, "RunDomainSearchUseCase", BuggyUseCase)
+
+    request = DomainSearchRequest(topic="test")
+    settings = Settings.model_validate({"OPENAI_API_KEY": "test-key"})  # pragma: allowlist secret
+    with pytest.raises(RuntimeError, match="programmer bug"):
+        run_module._execute_request(request, settings)

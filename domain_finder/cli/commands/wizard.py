@@ -5,8 +5,12 @@ from pydantic import ValidationError
 from rich.console import Console
 
 from domain_finder.application.dto import DomainSearchRequest
-from domain_finder.cli.commands.run import _execute_request, _header
-from domain_finder.infrastructure.config import Settings
+from domain_finder.cli.commands.run import (
+    _execute_request,
+    _header,
+    _load_settings,
+    _validation_message,
+)
 
 console = Console()
 
@@ -71,8 +75,7 @@ def wizard() -> None:
             skip_check=False,
         )
     except ValidationError as e:
-        message = e.errors()[0].get("msg", str(e))
-        console.print(f"[red]✗ Invalid input:[/] {message}")
+        console.print(f"[red]✗ Invalid input:[/] {_validation_message(e)}")
         raise typer.Exit(code=2) from e
 
-    _execute_request(request, Settings())
+    _execute_request(request, _load_settings())

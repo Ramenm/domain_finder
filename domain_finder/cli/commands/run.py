@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sqlite3
+
 import typer
 from pydantic import ValidationError
 from rich import box
@@ -11,7 +13,7 @@ from rich.table import Table
 
 from domain_finder.application.dto import DomainSearchRequest, SearchProgress
 from domain_finder.application.use_cases import RunDomainSearchUseCase
-from domain_finder.domain.errors import ProviderError
+from domain_finder.domain.errors import DomainError, ProviderError
 from domain_finder.domain.models import ProviderConfig
 from domain_finder.infrastructure.cache import CacheManager
 from domain_finder.infrastructure.config import Settings
@@ -30,6 +32,23 @@ def _header() -> None:
         "Registry state is checked via RDAP/WHOIS; registrability is reported separately.[/dim]"
     )
     console.print(Panel.fit(sub, title=title, border_style="cyan", box=box.ROUNDED))
+
+
+def _validation_message(error: ValidationError) -> str:
+    """Return one actionable validation message without framework internals."""
+    first = error.errors()[0]
+    location = ".".join(str(part) for part in first.get("loc", ()))
+    message = str(first.get("msg", "invalid value"))
+    return f"{location}: {message}" if location else message
+
+
+def _load_settings() -> Settings:
+    """Load settings and convert invalid environment values into a CLI error."""
+    try:
+        return Settings()
+    except ValidationError as error:
+        console.print(f"[red]✗ Invalid configuration:[/] {_validation_message(error)}")
+        raise typer.Exit(code=2) from error
 
 
 def _create_provider(
@@ -128,22 +147,22 @@ def _execute_request(request: DomainSearchRequest, settings: Settings) -> None:
     except ProviderError as e:
         console.print(f"[red]✗ LLM provider initialization error:[/] {e}")
         raise typer.Exit(code=2) from e
-    except Exception as e:  # noqa: BLE001
-        console.print(f"[red]✗ Invalid provider parameters:[/] {e}")
+
+    try:
+        cache = CacheManager(request.cache_file)
+        if request.clear_cache:
+            cache.clear()
+            console.print("[yellow]⚠ Cache cleared.[/yellow]")
+        writer = ResultWriter(txt_path=request.results_txt, csv_path=request.results_csv)
+        checker = _create_checker(
+            settings=settings,
+            use_rdap=request.use_rdap,
+            whois_fallback=request.whois_fallback,
+            max_workers=request.max_workers,
+        )
+    except (OSError, sqlite3.Error, DomainError) as e:
+        console.print(f"[red]✗ Cannot initialize search files/components:[/] {e}")
         raise typer.Exit(code=2) from e
-
-    cache = CacheManager(request.cache_file)
-    if request.clear_cache:
-        cache.clear()
-        console.print("[yellow]⚠ Cache cleared.[/yellow]")
-
-    writer = ResultWriter(txt_path=request.results_txt, csv_path=request.results_csv)
-    checker = _create_checker(
-        settings=settings,
-        use_rdap=request.use_rdap,
-        whois_fallback=request.whois_fallback,
-        max_workers=request.max_workers,
-    )
     use_case = RunDomainSearchUseCase(
         provider=llm_provider,
         checker=checker,
@@ -157,8 +176,8 @@ def _execute_request(request: DomainSearchRequest, settings: Settings) -> None:
     except KeyboardInterrupt as e:
         console.print("[yellow]⚠ Search cancelled by user.[/yellow]")
         raise typer.Exit(code=130) from e
-    except Exception as e:  # noqa: BLE001
-        console.print(f"[red]✗ Execution error:[/] {e}")
+    except (DomainError, OSError, sqlite3.Error) as e:
+        console.print(f"[red]✗ Search execution failed:[/] {e}")
         raise typer.Exit(code=1) from e
 
     console.rule("[bold]Search Results[/bold]")
@@ -290,7 +309,7 @@ def run(
     """
     _header()
 
-    settings = Settings()
+    settings = _load_settings()
     resolved_use_rdap = settings.use_rdap if use_rdap is None else use_rdap
     try:
         request = DomainSearchRequest(
@@ -316,8 +335,7 @@ def run(
             skip_check=skip_check,
         )
     except ValidationError as e:
-        message = e.errors()[0].get("msg", str(e))
-        console.print(f"[red]✗ Invalid input:[/] {message}")
+        console.print(f"[red]✗ Invalid input:[/] {_validation_message(e)}")
         raise typer.Exit(code=2) from e
 
     _execute_request(request, settings)
