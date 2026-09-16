@@ -143,3 +143,6 @@ benchmark-results*/
 
 .icann_reserved_names.xml
 .icann_reserved_names.xml.tmp
+
+# Local git worktrees
+.worktrees/

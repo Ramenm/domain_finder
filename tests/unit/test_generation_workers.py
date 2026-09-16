@@ -37,7 +37,7 @@ class Dummy:
 
 
 class DummyWriter:
-    def append_available(self, records):
+    def append_check_results(self, results):
         pass
 
 

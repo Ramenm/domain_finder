@@ -82,6 +82,17 @@ The checker can return these main states:
 - `UNKNOWN`, `RATE_LIMITED`, `NETWORK_ERROR`, `UNSUPPORTED`, `INVALID` — no purchase claim is made.
 
 Registrar checkout remains the final authority for actual registration, pricing, and eligibility.
+
+## Results and exit behavior
+
+`results.txt` contains confirmed registrable domains. With `--skip-check`, it intentionally contains generated names without making an availability claim.
+
+`results.csv` is the authoritative report for every processed candidate. Its columns are `domain`, `status`, `available`, `source`, `checked_at`, and `detail`. Re-running a search updates an older `skipped` or inconclusive row when a later registry check has a more definitive result.
+
+During long work the CLI reports generation and checking phases. Redirected/non-interactive output stays plain and does not depend on terminal control sequences.
+
+Exit behavior is intentionally strict: invalid input/configuration uses exit code `2`, a run with no usable generation result uses `1`, and Ctrl+C uses `130`. Partial generation failures preserve completed work and are reported explicitly instead of being presented as a clean success.
+
 ## Development
 
 Run the default offline test suite:

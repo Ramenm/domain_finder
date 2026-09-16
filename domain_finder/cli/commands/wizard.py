@@ -1,17 +1,22 @@
 """Wizard command for interactive domain search."""
 
 import typer
+from pydantic import ValidationError
 from rich.console import Console
 
-from domain_finder.cli.commands.run import _header, run
+from domain_finder.application.dto import DomainSearchRequest
+from domain_finder.cli.commands.run import (
+    _execute_request,
+    _header,
+    _load_settings,
+    _validation_message,
+)
 
 console = Console()
 
 
 def wizard() -> None:
-    """
-    Interactive mode: prompts questions in terminal and runs domain search.
-    """
+    """Interactive mode: prompt for a validated domain search request."""
     _header()
 
     topic = typer.prompt(
@@ -19,7 +24,10 @@ def wizard() -> None:
         default="neural networks, benchmarks, model comparison",
     )
     iterations = typer.prompt("🔄 Number of iterations", default=5)
-    per_request = typer.prompt("📊 Number of domains to request per iteration", default=100)
+    per_request = typer.prompt(
+        "📊 Number of domains to request per iteration",
+        default=100,
+    )
     llm_workers = typer.prompt("Number of parallel LLM requests per iteration", default=1)
     tld = typer.prompt(
         "🌐 Top-level domains (comma-separated, without dot, e.g.: com, io, ai)", default="com"
@@ -39,43 +47,35 @@ def wizard() -> None:
         "📄 File for saving CSV report (Enter to skip)", default="results.csv"
     )
 
-    # Type conversion
-    try:
-        iterations = int(iterations)
-        per_request = int(per_request)
-        llm_workers = int(llm_workers)
-        max_workers = int(max_workers)
-        min_len = int(min_len)
-        max_len = int(max_len)
-        cooldown = float(cooldown)
-    except (ValueError, TypeError) as e:
-        console.print("[red]✗ Error: invalid numeric values. Please check your input.[/red]")
-        raise typer.Exit(code=2) from e
-
     use_rdap = use_rdap_str.strip().lower() in ("y", "yes", "true", "1")
     whois_fallback_b = whois_fallback.strip().lower() in ("y", "yes", "true", "1")
-    tld_list = [x.strip().lstrip(".").lower() for x in tld.split(",") if x.strip()]
+    tld_list = [x.strip() for x in tld.split(",") if x.strip()]
 
-    # Run main command
-    run(
-        topic=topic,
-        iterations=iterations,
-        per_request=per_request,
-        llm_workers=llm_workers,
-        tld=tld_list,
-        provider=provider,
-        model=(model or None),
-        temperature=0.7,
-        timeout=60.0,
-        use_rdap=use_rdap,
-        whois_fallback=whois_fallback_b,
-        max_workers=max_workers,
-        min_len=min_len,
-        max_len=max_len,
-        cooldown=cooldown,
-        cache_file="domains_cache.json",
-        clear_cache=False,
-        results_txt=results_txt,
-        results_csv=(results_csv if results_csv else None),
-        skip_check=False,
-    )
+    try:
+        request = DomainSearchRequest(
+            topic=topic,
+            iterations=iterations,
+            per_request=per_request,
+            llm_workers=llm_workers,
+            tlds=tld_list,
+            provider=provider,
+            model=(model or None),
+            temperature=0.7,
+            timeout=60.0,
+            use_rdap=use_rdap,
+            whois_fallback=whois_fallback_b,
+            max_workers=max_workers,
+            min_len=min_len,
+            max_len=max_len,
+            cooldown=cooldown,
+            cache_file="domains_cache.sqlite3",
+            clear_cache=False,
+            results_txt=results_txt,
+            results_csv=(results_csv if results_csv else None),
+            skip_check=False,
+        )
+    except ValidationError as e:
+        console.print(f"[red]✗ Invalid input:[/] {_validation_message(e)}")
+        raise typer.Exit(code=2) from e
+
+    _execute_request(request, _load_settings())

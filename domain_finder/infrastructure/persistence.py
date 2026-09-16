@@ -17,9 +17,9 @@ console = Console()
 
 
 class ResultWriter:
-    """Deduplicating writer for generated and confirmed domain results."""
+    """Deduplicating writer for generated and checked domain results."""
 
-    CSV_FIELDS = ["domain", "available", "source", "checked_at"]
+    CSV_FIELDS = ["domain", "status", "available", "source", "checked_at", "detail"]
 
     def __init__(
         self,
@@ -44,6 +44,19 @@ class ResultWriter:
         if self.csv_path and (not self.csv_path.exists() or self.csv_path.stat().st_size == 0):
             with self.csv_path.open("w", newline="", encoding="utf-8") as handle:
                 csv.DictWriter(handle, fieldnames=self.CSV_FIELDS).writeheader()
+
+    @classmethod
+    def _normalize_existing_row(cls, row: dict[str, str]) -> dict[str, str]:
+        normalized = {field: row.get(field, "") or "" for field in cls.CSV_FIELDS}
+        if not normalized["status"]:
+            available = normalized["available"].strip().lower()
+            if normalized["source"] == "skipped":
+                normalized["status"] = "skipped"
+            elif available == "true":
+                normalized["status"] = "registrable"
+            elif available == "false":
+                normalized["status"] = "registered"
+        return normalized
 
     def _append_txt_once(self, domains: Iterable[str]) -> None:
         pending: list[str] = []
@@ -70,7 +83,7 @@ class ResultWriter:
                     domain = row.get("domain", "").strip()
                     if not domain:
                         continue
-                    normalized = {field: row.get(field, "") for field in self.CSV_FIELDS}
+                    normalized = self._normalize_existing_row(row)
                     if domain in positions:
                         rows[positions[domain]] = normalized
                     else:
@@ -93,8 +106,43 @@ class ResultWriter:
             writer.writerows(rows)
         tmp_path.replace(self.csv_path)
 
+    @staticmethod
+    def _availability_text(result: DomainCheckResult) -> str:
+        if result.available is True:
+            return "true"
+        if result.available is False:
+            return "false"
+        return ""
+
+    def append_check_results(self, results: Iterable[DomainCheckResult]) -> None:
+        """Persist every checked result and upgrade any older unchecked row."""
+        records: dict[str, DomainCheckResult] = {}
+        for result in results:
+            records[result.domain] = result
+        if not records:
+            return
+
+        with self._lock:
+            self._append_txt_once(
+                result.domain for result in records.values() if result.is_registrable
+            )
+            self._upsert_csv(
+                [
+                    {
+                        "domain": result.domain,
+                        "status": result.status.value if result.status else "unknown",
+                        "available": self._availability_text(result),
+                        "source": result.source,
+                        "checked_at": str(int(result.checked_at)),
+                        "detail": result.detail or "",
+                    }
+                    for result in records.values()
+                ],
+                overwrite=True,
+            )
+
     def append_available(self, domain_records: Iterable[tuple[str, str, float]]) -> None:
-        """Persist confirmed registrable domains, upgrading unchecked rows when needed."""
+        """Persist confirmed registrable domains for compatibility callers."""
         records: dict[str, tuple[str, str, float]] = {}
         for domain, source, checked_at in domain_records:
             records.setdefault(domain, (domain, source, checked_at))
@@ -106,9 +154,11 @@ class ResultWriter:
                 [
                     {
                         "domain": domain,
+                        "status": "registrable",
                         "available": "true",
                         "source": source,
                         "checked_at": str(int(checked_at)),
+                        "detail": "",
                     }
                     for domain, source, checked_at in records.values()
                 ],
@@ -126,9 +176,11 @@ class ResultWriter:
                 [
                     {
                         "domain": domain,
+                        "status": "skipped",
                         "available": "",
                         "source": "skipped",
                         "checked_at": "",
+                        "detail": "",
                     }
                     for domain in unique
                 ],
@@ -136,12 +188,7 @@ class ResultWriter:
             )
 
     def append_results(self, results: list[DomainCheckResult]) -> None:
-        available_records = [
-            (result.domain, result.source, result.checked_at)
-            for result in results
-            if result.available is True
-        ]
-        self.append_available(available_records)
+        self.append_check_results(results)
 
     @staticmethod
     def show_table(domains: list[str], title: str = "Confirmed Registrable Domains") -> None:

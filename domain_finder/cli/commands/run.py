@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import sqlite3
+
 import typer
+from pydantic import ValidationError
 from rich import box
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from domain_finder.application.dto import DomainSearchRequest
+from domain_finder.application.dto import DomainSearchRequest, SearchProgress
 from domain_finder.application.use_cases import RunDomainSearchUseCase
-from domain_finder.domain.errors import ProviderError
+from domain_finder.domain.errors import DomainError, ProviderError
 from domain_finder.domain.models import ProviderConfig
 from domain_finder.infrastructure.cache import CacheManager
 from domain_finder.infrastructure.config import Settings
@@ -29,6 +32,23 @@ def _header() -> None:
         "Registry state is checked via RDAP/WHOIS; registrability is reported separately.[/dim]"
     )
     console.print(Panel.fit(sub, title=title, border_style="cyan", box=box.ROUNDED))
+
+
+def _validation_message(error: ValidationError) -> str:
+    """Return one actionable validation message without framework internals."""
+    first = error.errors()[0]
+    location = ".".join(str(part) for part in first.get("loc", ()))
+    message = str(first.get("msg", "invalid value"))
+    return f"{location}: {message}" if location else message
+
+
+def _load_settings() -> Settings:
+    """Load settings and convert invalid environment values into a CLI error."""
+    try:
+        return Settings()
+    except ValidationError as error:
+        console.print(f"[red]✗ Invalid configuration:[/] {_validation_message(error)}")
+        raise typer.Exit(code=2) from error
 
 
 def _create_provider(
@@ -94,6 +114,111 @@ def _create_checker(
         registry_profile_file=settings.registry_profile_file,
         reserved_names_cache_file=settings.reserved_names_cache_file,
     )
+
+
+def _show_progress(event: SearchProgress) -> None:
+    prefix = f"Iteration {event.iteration}/{event.iterations}"
+    if event.phase == "generation_start":
+        console.print(f"[dim]… {prefix}: generating domain candidates…[/dim]")
+    elif event.phase == "generation_complete":
+        console.print(f"[dim]✓ {prefix}: generated {event.count or 0} candidate(s).[/dim]")
+    elif event.phase == "checking_start":
+        console.print(f"[dim]… {prefix}: checking {event.count or 0} candidate(s)…[/dim]")
+    elif event.phase == "checking_complete":
+        console.print(f"[dim]✓ {prefix}: checked {event.count or 0} candidate(s).[/dim]")
+    elif event.phase == "generation_failed":
+        console.print(f"[yellow]⚠ {prefix}: generation failed; continuing if possible.[/yellow]")
+
+
+def _execute_request(request: DomainSearchRequest, settings: Settings) -> None:
+    """Execute an already validated search request and render its result."""
+    try:
+        llm_provider = _create_provider(
+            request.provider,
+            request.model,
+            request.temperature,
+            request.timeout,
+            settings,
+        )
+        provider_display = getattr(llm_provider, "display_name", request.provider)
+        console.print(
+            f"[green]✓ Provider:[/] {provider_display}  [green]Model:[/] {llm_provider.config.model}"
+        )
+    except ProviderError as e:
+        console.print(f"[red]✗ LLM provider initialization error:[/] {e}")
+        raise typer.Exit(code=2) from e
+
+    try:
+        cache = CacheManager(request.cache_file)
+        if request.clear_cache:
+            cache.clear()
+            console.print("[yellow]⚠ Cache cleared.[/yellow]")
+        writer = ResultWriter(txt_path=request.results_txt, csv_path=request.results_csv)
+        checker = _create_checker(
+            settings=settings,
+            use_rdap=request.use_rdap,
+            whois_fallback=request.whois_fallback,
+            max_workers=request.max_workers,
+        )
+    except (OSError, sqlite3.Error, DomainError) as e:
+        console.print(f"[red]✗ Cannot initialize search files/components:[/] {e}")
+        raise typer.Exit(code=2) from e
+    use_case = RunDomainSearchUseCase(
+        provider=llm_provider,
+        checker=checker,
+        repository=cache,
+        writer=writer,
+        progress_callback=_show_progress,
+    )
+
+    try:
+        result = use_case.execute(request)
+    except KeyboardInterrupt as e:
+        console.print("[yellow]⚠ Search cancelled by user.[/yellow]")
+        raise typer.Exit(code=130) from e
+    except (DomainError, OSError, sqlite3.Error) as e:
+        console.print(f"[red]✗ Search execution failed:[/] {e}")
+        raise typer.Exit(code=1) from e
+
+    console.rule("[bold]Search Results[/bold]")
+    table = Table(title="Session Statistics", box=box.SIMPLE)
+    table.add_column("Parameter", style="cyan")
+    table.add_column("Value", style="green")
+    table.add_row("Iterations attempted", str(result.iterations_attempted))
+    table.add_row("Iterations completed", str(result.iterations_completed))
+    table.add_row("Iterations failed", str(result.iterations_failed))
+    table.add_row("Domains generated (unique)", str(result.total_generated))
+    table.add_row("Domains checked", str(result.total_checked))
+    table.add_row("Confirmed registrable domains", str(result.total_available))
+    table.add_row("Unregistered (not purchase-confirmed)", str(result.total_unregistered))
+    table.add_row("Registered", str(result.total_registered))
+    table.add_row("Reserved", str(result.total_reserved))
+    table.add_row("Inconclusive / errors", str(result.total_inconclusive))
+    table.add_row("Skipped / unverified", str(result.total_skipped))
+    table.add_row("Results file (.txt)", result.results_txt)
+    table.add_row("Results file (.csv)", result.results_csv or "—")
+    console.print(table)
+
+    if result.available_domains:
+        ResultWriter.show_table(result.available_domains)
+    if result.unregistered_domains:
+        ResultWriter.show_table(
+            result.unregistered_domains,
+            title="Unregistered Domains (registrability not confirmed)",
+        )
+
+    if result.iterations_completed == 0 or result.total_generated == 0:
+        console.print(
+            "[red]✗ Search failed: no domain generation iteration produced usable results.[/red]"
+        )
+        raise typer.Exit(code=1)
+    if result.iterations_failed:
+        console.print(
+            f"[yellow]⚠ Search completed with partial success: "
+            f"{result.iterations_failed} iteration(s) failed.[/yellow]"
+        )
+    else:
+        console.print("[green]✓ Search completed successfully.[/green]")
 
 
 def run(
@@ -184,97 +309,33 @@ def run(
     """
     _header()
 
-    # Load settings
-    settings = Settings()
-    if use_rdap is None:
-        use_rdap = settings.use_rdap
-
-    # Create provider
+    settings = _load_settings()
+    resolved_use_rdap = settings.use_rdap if use_rdap is None else use_rdap
     try:
-        llm_provider = _create_provider(provider, model, temperature, timeout, settings)
-        provider_display = getattr(llm_provider, "display_name", provider)
-        console.print(
-            f"[green]✓ Provider:[/] {provider_display}  [green]Model:[/] {llm_provider.config.model}"
+        request = DomainSearchRequest(
+            topic=topic,
+            iterations=iterations,
+            per_request=per_request,
+            llm_workers=llm_workers,
+            tlds=tld,
+            provider=provider,
+            model=model,
+            temperature=temperature,
+            timeout=timeout,
+            use_rdap=resolved_use_rdap,
+            whois_fallback=whois_fallback,
+            max_workers=max_workers,
+            min_len=min_len,
+            max_len=max_len,
+            cooldown=cooldown,
+            cache_file=cache_file,
+            clear_cache=clear_cache,
+            results_txt=results_txt,
+            results_csv=results_csv,
+            skip_check=skip_check,
         )
-    except ProviderError as e:
-        console.print(f"[red]✗ LLM provider initialization error:[/] {e}")
-        raise typer.Exit(code=2) from e
-    except Exception as e:  # noqa: BLE001
-        console.print(f"[red]✗ Invalid provider parameters:[/] {e}")
+    except ValidationError as e:
+        console.print(f"[red]✗ Invalid input:[/] {_validation_message(e)}")
         raise typer.Exit(code=2) from e
 
-    # Create infrastructure components
-    cache = CacheManager(cache_file)
-    if clear_cache:
-        cache.clear()
-        console.print("[yellow]⚠ Cache cleared.[/yellow]")
-
-    writer = ResultWriter(txt_path=results_txt, csv_path=results_csv)
-    checker = _create_checker(
-        settings=settings,
-        use_rdap=use_rdap,
-        whois_fallback=whois_fallback,
-        max_workers=max_workers,
-    )
-
-    # Create use case
-    use_case = RunDomainSearchUseCase(
-        provider=llm_provider,
-        checker=checker,
-        repository=cache,
-        writer=writer,
-    )
-
-    # Create request
-    request = DomainSearchRequest(
-        topic=topic,
-        iterations=iterations,
-        per_request=per_request,
-        llm_workers=llm_workers,
-        tlds=tld,
-        provider=provider,
-        model=model,
-        temperature=temperature,
-        timeout=timeout,
-        use_rdap=use_rdap,
-        whois_fallback=whois_fallback,
-        max_workers=max_workers,
-        min_len=min_len,
-        max_len=max_len,
-        cooldown=cooldown,
-        cache_file=cache_file,
-        clear_cache=clear_cache,
-        results_txt=results_txt,
-        results_csv=results_csv,
-        skip_check=skip_check,
-    )
-
-    # Execute use case
-    try:
-        result = use_case.execute(request)
-    except Exception as e:  # noqa: BLE001
-        console.print(f"[red]✗ Execution error:[/] {e}")
-        raise typer.Exit(code=1) from e
-
-    # Display results
-    console.rule("[bold]Search Results[/bold]")
-    table = Table(title="Session Statistics", box=box.SIMPLE)
-    table.add_column("Parameter", style="cyan")
-    table.add_column("Value", style="green")
-    table.add_row("Iterations completed", str(result.total_iterations))
-    table.add_row("Domains generated (unique)", str(result.total_generated))
-    table.add_row("Confirmed registrable domains", str(result.total_available))
-    table.add_row("Unregistered (not purchase-confirmed)", str(result.total_unregistered))
-    table.add_row("Results file (.txt)", result.results_txt)
-    table.add_row("Results file (.csv)", result.results_csv or "—")
-    console.print(table)
-
-    if result.available_domains:
-        ResultWriter.show_table(result.available_domains)
-    if result.unregistered_domains:
-        ResultWriter.show_table(
-            result.unregistered_domains,
-            title="Unregistered Domains (registrability not confirmed)",
-        )
-
-    console.print("[green]✓ Search completed successfully.[/green]")
+    _execute_request(request, settings)

@@ -549,32 +549,40 @@ class TestRegisteredDomains:
         assert unavailable_count == len(results), "All popular domains should be unavailable"
 
     def test_whois_client_popular_registered_domains(self):
-        """Test WHOIS client with popular registered domains."""
+        """Test WHOIS with registered domains while tolerating transient network failures."""
         client = WhoisClient()
+        domains = POPULAR_REGISTERED_DOMAINS[:15]
 
         results = []
+        transient = []
         start_time = time.time()
 
-        for domain in POPULAR_REGISTERED_DOMAINS[:15]:  # Test first 15
+        for domain in domains:
             result = client.check_domain(domain)
             results.append((domain, result))
             assert isinstance(result, DomainCheckResult)
             assert result.domain == domain
             assert result.source == "whois"
-            # These domains should be registered (unavailable)
+            assert_result_semantics(result)
+            if result.status in {DomainCheckStatus.NETWORK_ERROR, DomainCheckStatus.RATE_LIMITED}:
+                transient.append((domain, result))
+                continue
             assert result.available is False, f"{domain} should be registered"
 
         elapsed = time.time() - start_time
-
         unavailable_count = sum(1 for _, r in results if r.available is False)
+        minimum_conclusive = (len(domains) * 4 + 4) // 5  # Require at least 80%.
 
         print("\nWHOIS Popular Registered Domains Test:")
-        print(f"  Total domains: {len(POPULAR_REGISTERED_DOMAINS[:15])}")
-        print(f"  Successful checks: {len(results)}")
-        print(f"  Correctly identified as unavailable: {unavailable_count}/{len(results)}")
+        print(f"  Total domains: {len(domains)}")
+        print(f"  Conclusive registered checks: {unavailable_count}/{len(domains)}")
+        print(f"  Transient network results: {len(transient)}")
         print(f"  Time elapsed: {elapsed:.2f}s")
 
-        assert unavailable_count == len(results), "All popular domains should be unavailable"
+        assert unavailable_count >= minimum_conclusive, (
+            f"Expected at least {minimum_conclusive}/{len(domains)} conclusive registered results, "
+            f"got {unavailable_count}; transient={len(transient)}"
+        )
 
     def test_domain_checker_popular_registered_domains(self):
         """Test DomainChecker with popular registered domains."""

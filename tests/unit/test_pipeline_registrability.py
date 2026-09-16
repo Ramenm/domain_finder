@@ -46,10 +46,10 @@ class MemoryRepo:
 
 class RecordingWriter:
     def __init__(self) -> None:
-        self.available = []
+        self.results = []
 
-    def append_available(self, records) -> None:
-        self.available.extend(records)
+    def append_check_results(self, results) -> None:
+        self.results.extend(results)
 
 
 def test_pipeline_reports_unregistered_separately_from_registrable() -> None:
@@ -71,4 +71,53 @@ def test_pipeline_reports_unregistered_separately_from_registrable() -> None:
     assert result.total_available == 1
     assert result.unregistered_domains == ["alpha.com"]
     assert result.total_unregistered == 1
-    assert [row[0] for row in writer.available] == ["beta.com"]
+    assert {row.domain for row in writer.results} == {"alpha.com", "beta.com"}
+
+
+class MixedStatusProvider:
+    def generate_domains(self, params: DomainSearchParams) -> str:
+        return "reg.com,free.com,absent.com,reserved.com,unknown.com,error.com"
+
+
+class MixedStatusChecker:
+    def check_domain(self, domain: str) -> DomainCheckResult:
+        return self.check_domains([domain])[domain]
+
+    def check_domains(self, domains: list[str]) -> dict[str, DomainCheckResult]:
+        statuses = {
+            "reg.com": DomainCheckStatus.REGISTERED,
+            "free.com": DomainCheckStatus.REGISTRABLE,
+            "absent.com": DomainCheckStatus.UNREGISTERED,
+            "reserved.com": DomainCheckStatus.RESERVED,
+            "unknown.com": DomainCheckStatus.UNKNOWN,
+            "error.com": DomainCheckStatus.NETWORK_ERROR,
+        }
+        return {
+            domain: DomainCheckResult(
+                domain=domain,
+                status=statuses[domain],
+                source="unknown" if domain in {"unknown.com", "error.com"} else "rdap",
+                checked_at=1.0,
+            )
+            for domain in domains
+        }
+
+
+def test_pipeline_counts_every_user_visible_status_category() -> None:
+    writer = RecordingWriter()
+    result = RunDomainSearchUseCase(
+        MixedStatusProvider(), MixedStatusChecker(), MemoryRepo(), writer
+    ).execute(
+        DomainSearchRequest(
+            topic="test", iterations=1, per_request=6, tlds=["com"], min_len=1, cooldown=0
+        )
+    )
+
+    assert result.total_generated == 6
+    assert result.total_checked == 6
+    assert result.total_available == 1
+    assert result.total_unregistered == 1
+    assert result.total_registered == 1
+    assert result.total_reserved == 1
+    assert result.total_inconclusive == 2
+    assert result.total_skipped == 0
