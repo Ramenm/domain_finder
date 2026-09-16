@@ -141,11 +141,14 @@ def run(
     ),
     whois_fallback: bool = typer.Option(
         True,
-        "--whois-fallback",
-        help="Use WHOIS as a fallback method if RDAP did not provide a definitive answer.",
+        "--whois-fallback/--no-whois-fallback",
+        help="Enable or disable WHOIS fallback when RDAP is inconclusive.",
     ),
     max_workers: int = typer.Option(
-        20, "--workers", help="Number of threads for parallel domain checking via RDAP/WHOIS."
+        20,
+        "--workers",
+        min=1,
+        help="Number of threads for parallel domain checking via RDAP/WHOIS.",
     ),
     min_len: int = typer.Option(
         4, "--min-len", help="Minimum length of the second-level domain label (without TLD)."

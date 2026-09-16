@@ -17,7 +17,9 @@ console = Console()
 
 
 class ResultWriter:
-    """Deduplicating writer for available domain results."""
+    """Deduplicating writer for generated and confirmed domain results."""
+
+    CSV_FIELDS = ["domain", "available", "source", "checked_at"]
 
     def __init__(
         self,
@@ -41,32 +43,97 @@ class ResultWriter:
 
         if self.csv_path and (not self.csv_path.exists() or self.csv_path.stat().st_size == 0):
             with self.csv_path.open("w", newline="", encoding="utf-8") as handle:
-                csv.writer(handle).writerow(["domain", "available", "source", "checked_at"])
+                csv.DictWriter(handle, fieldnames=self.CSV_FIELDS).writeheader()
+
+    def _append_txt_once(self, domains: Iterable[str]) -> None:
+        pending: list[str] = []
+        for domain in domains:
+            if domain in self._seen:
+                continue
+            self._seen.add(domain)
+            pending.append(domain)
+        if not pending:
+            return
+        with self.txt_path.open("a", encoding="utf-8") as handle:
+            for domain in pending:
+                handle.write(f"{domain}\n")
+
+    def _upsert_csv(self, new_rows: list[dict[str, str]], *, overwrite: bool) -> None:
+        if self.csv_path is None or not new_rows:
+            return
+
+        rows: list[dict[str, str]] = []
+        positions: dict[str, int] = {}
+        if self.csv_path.exists() and self.csv_path.stat().st_size:
+            with self.csv_path.open(newline="", encoding="utf-8") as handle:
+                for row in csv.DictReader(handle):
+                    domain = row.get("domain", "").strip()
+                    if not domain:
+                        continue
+                    normalized = {field: row.get(field, "") for field in self.CSV_FIELDS}
+                    if domain in positions:
+                        rows[positions[domain]] = normalized
+                    else:
+                        positions[domain] = len(rows)
+                        rows.append(normalized)
+
+        for row in new_rows:
+            domain = row["domain"]
+            if domain in positions:
+                if overwrite:
+                    rows[positions[domain]] = row
+                continue
+            positions[domain] = len(rows)
+            rows.append(row)
+
+        tmp_path = self.csv_path.with_name(f"{self.csv_path.name}.tmp")
+        with tmp_path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=self.CSV_FIELDS)
+            writer.writeheader()
+            writer.writerows(rows)
+        tmp_path.replace(self.csv_path)
 
     def append_available(self, domain_records: Iterable[tuple[str, str, float]]) -> None:
-        """Append each domain once, safely consuming one-shot iterables."""
-        records = list(domain_records)
+        """Persist confirmed registrable domains, upgrading unchecked rows when needed."""
+        records: dict[str, tuple[str, str, float]] = {}
+        for domain, source, checked_at in domain_records:
+            records.setdefault(domain, (domain, source, checked_at))
         if not records:
             return
         with self._lock:
-            unique: list[tuple[str, str, float]] = []
-            for domain, source, checked_at in records:
-                if domain in self._seen:
-                    continue
-                self._seen.add(domain)
-                unique.append((domain, source, checked_at))
-            if not unique:
-                return
+            self._append_txt_once(records)
+            self._upsert_csv(
+                [
+                    {
+                        "domain": domain,
+                        "available": "true",
+                        "source": source,
+                        "checked_at": str(int(checked_at)),
+                    }
+                    for domain, source, checked_at in records.values()
+                ],
+                overwrite=True,
+            )
 
-            with self.txt_path.open("a", encoding="utf-8") as handle:
-                for domain, _source, _checked_at in unique:
-                    handle.write(f"{domain}\n")
-
-            if self.csv_path:
-                with self.csv_path.open("a", newline="", encoding="utf-8") as handle:
-                    writer = csv.writer(handle)
-                    for domain, source, checked_at in unique:
-                        writer.writerow([domain, "true", source, int(checked_at)])
+    def append_unchecked(self, domains: Iterable[str]) -> None:
+        """Persist generated domains without claiming registry availability."""
+        unique = list(dict.fromkeys(domains))
+        if not unique:
+            return
+        with self._lock:
+            self._append_txt_once(unique)
+            self._upsert_csv(
+                [
+                    {
+                        "domain": domain,
+                        "available": "",
+                        "source": "skipped",
+                        "checked_at": "",
+                    }
+                    for domain in unique
+                ],
+                overwrite=False,
+            )
 
     def append_results(self, results: list[DomainCheckResult]) -> None:
         available_records = [

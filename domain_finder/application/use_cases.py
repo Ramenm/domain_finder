@@ -154,10 +154,8 @@ class RunDomainSearchUseCase:
 
                 # Check availability or skip
                 if request.skip_check:
-                    # Just save without checking
-                    for candidate in new_candidates:
-                        self.writer.append_available([(candidate.name, "skipped", time.time())])
-                    all_available.extend([c.name for c in new_candidates])
+                    # Save generated names while keeping registry availability explicitly unknown.
+                    self.writer.append_unchecked(candidate.name for candidate in new_candidates)
                     all_suggested.extend([c.name for c in new_candidates])
                 else:
                     # Check domains - this runs in parallel with next generation
