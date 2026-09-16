@@ -170,10 +170,9 @@ class RunDomainSearchUseCase:
                 )
 
                 # Filter out already seen domains
+                # Suppress duplicates only within this session. Cross-session cache entries
+                # must flow through DomainCheckService so fresh cached results remain visible.
                 seen = set(all_suggested)
-                if isinstance(self.repository, CacheManager):
-                    seen.update(self.repository.known().keys())
-
                 new_candidates = [c for c in candidates if c.name not in seen]
 
                 if not new_candidates:
