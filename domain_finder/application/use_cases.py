@@ -8,7 +8,12 @@ import time
 
 from domain_finder.application.dto import DomainSearchRequest, DomainSearchResult
 from domain_finder.domain.errors import ProviderError
-from domain_finder.domain.models import DomainCandidate, DomainCheckStatus, DomainSearchParams
+from domain_finder.domain.models import (
+    DomainCandidate,
+    DomainCheckResult,
+    DomainCheckStatus,
+    DomainSearchParams,
+)
 from domain_finder.domain.ports import DomainCheckerPort, DomainProviderPort, ResultRepositoryPort
 from domain_finder.domain.scoring import DomainQualityScorer
 from domain_finder.domain.services import DomainCheckService, DomainGeneratorService
@@ -70,6 +75,11 @@ class RunDomainSearchUseCase:
         all_suggested: list[str] = []
         all_available: list[str] = []
         all_unregistered: list[str] = []
+        all_checked: set[str] = set()
+        all_skipped: set[str] = set()
+        all_registered: set[str] = set()
+        all_reserved: set[str] = set()
+        all_inconclusive: set[str] = set()
         iterations_attempted = 0
         iterations_completed = 0
         iterations_failed = 0
@@ -155,8 +165,10 @@ class RunDomainSearchUseCase:
                 # Check availability or skip
                 if request.skip_check:
                     # Save generated names while keeping registry availability explicitly unknown.
-                    self.writer.append_unchecked(candidate.name for candidate in new_candidates)
-                    all_suggested.extend([c.name for c in new_candidates])
+                    skipped_names = [candidate.name for candidate in new_candidates]
+                    self.writer.append_unchecked(skipped_names)
+                    all_skipped.update(skipped_names)
+                    all_suggested.extend(skipped_names)
                 else:
                     # Check domains - this runs in parallel with next generation
                     domain_names = [c.name for c in new_candidates]
@@ -173,7 +185,26 @@ class RunDomainSearchUseCase:
 
                         logger = logging.getLogger(__name__)
                         logger.error(f"Error checking domains in iteration {iteration}: {e}")
-                        results = {}
+                        results = {
+                            domain: DomainCheckResult(
+                                domain=domain,
+                                status=DomainCheckStatus.NETWORK_ERROR,
+                                source="unknown",
+                                checked_at=time.time(),
+                                detail=f"checking failed: {e}",
+                            )
+                            for domain in domain_names
+                        }
+
+                    for domain in domain_names:
+                        if domain not in results:
+                            results[domain] = DomainCheckResult(
+                                domain=domain,
+                                status=DomainCheckStatus.UNKNOWN,
+                                source="unknown",
+                                checked_at=time.time(),
+                                detail="checker returned no result",
+                            )
 
                     # Save cache
                     if isinstance(self.repository, CacheManager):
@@ -195,6 +226,7 @@ class RunDomainSearchUseCase:
 
                     for domain, result in results.items():
                         checked_count += 1
+                        all_checked.add(domain)
                         if result.is_registrable:
                             available_count += 1
                             newly_available.append(domain)
@@ -204,7 +236,12 @@ class RunDomainSearchUseCase:
                                 f"Domain {domain} is unregistered but registrability is not confirmed "
                                 f"(source: {result.source})"
                             )
+                        elif result.status is DomainCheckStatus.REGISTERED:
+                            all_registered.add(domain)
+                        elif result.status is DomainCheckStatus.RESERVED:
+                            all_reserved.add(domain)
                         else:
+                            all_inconclusive.add(domain)
                             logger.debug(
                                 f"Domain {domain} is not registrable (status: {result.status}, "
                                 f"source: {result.source})"
@@ -237,10 +274,15 @@ class RunDomainSearchUseCase:
             iterations_completed=iterations_completed,
             iterations_failed=iterations_failed,
             total_generated=len(set(all_suggested)),
+            total_checked=len(all_checked),
+            total_skipped=len(all_skipped),
             total_available=len(set(all_available)),
             available_domains=sorted(set(all_available)),
             total_unregistered=len(set(all_unregistered)),
             unregistered_domains=sorted(set(all_unregistered)),
+            total_registered=len(all_registered),
+            total_reserved=len(all_reserved),
+            total_inconclusive=len(all_inconclusive),
             results_txt=request.results_txt,
             results_csv=request.results_csv,
         )

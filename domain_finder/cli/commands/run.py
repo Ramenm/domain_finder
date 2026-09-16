@@ -147,10 +147,17 @@ def _execute_request(request: DomainSearchRequest, settings: Settings) -> None:
     table = Table(title="Session Statistics", box=box.SIMPLE)
     table.add_column("Parameter", style="cyan")
     table.add_column("Value", style="green")
-    table.add_row("Iterations completed", str(result.total_iterations))
+    table.add_row("Iterations attempted", str(result.iterations_attempted))
+    table.add_row("Iterations completed", str(result.iterations_completed))
+    table.add_row("Iterations failed", str(result.iterations_failed))
     table.add_row("Domains generated (unique)", str(result.total_generated))
+    table.add_row("Domains checked", str(result.total_checked))
     table.add_row("Confirmed registrable domains", str(result.total_available))
     table.add_row("Unregistered (not purchase-confirmed)", str(result.total_unregistered))
+    table.add_row("Registered", str(result.total_registered))
+    table.add_row("Reserved", str(result.total_reserved))
+    table.add_row("Inconclusive / errors", str(result.total_inconclusive))
+    table.add_row("Skipped / unverified", str(result.total_skipped))
     table.add_row("Results file (.txt)", result.results_txt)
     table.add_row("Results file (.csv)", result.results_csv or "—")
     console.print(table)
@@ -163,7 +170,18 @@ def _execute_request(request: DomainSearchRequest, settings: Settings) -> None:
             title="Unregistered Domains (registrability not confirmed)",
         )
 
-    console.print("[green]✓ Search completed successfully.[/green]")
+    if result.iterations_completed == 0 or result.total_generated == 0:
+        console.print(
+            "[red]✗ Search failed: no domain generation iteration produced usable results.[/red]"
+        )
+        raise typer.Exit(code=1)
+    if result.iterations_failed:
+        console.print(
+            f"[yellow]⚠ Search completed with partial success: "
+            f"{result.iterations_failed} iteration(s) failed.[/yellow]"
+        )
+    else:
+        console.print("[green]✓ Search completed successfully.[/green]")
 
 
 def run(

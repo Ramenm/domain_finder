@@ -69,9 +69,14 @@ class DomainSearchResult(BaseModel):
     iterations_completed: int
     iterations_failed: int
     total_generated: int
+    total_checked: int = 0
+    total_skipped: int = 0
     total_available: int
     available_domains: list[str]
     total_unregistered: int = 0
     unregistered_domains: list[str] = Field(default_factory=list)
+    total_registered: int = 0
+    total_reserved: int = 0
+    total_inconclusive: int = 0
     results_txt: str
     results_csv: str | None = None
