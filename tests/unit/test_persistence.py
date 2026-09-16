@@ -62,8 +62,86 @@ def test_confirmed_result_upgrades_prior_unchecked_record(tmp_path: Path) -> Non
     assert rows == [
         {
             "domain": "alpha.com",
+            "status": "registrable",
             "available": "true",
             "source": "rdap",
             "checked_at": "42",
+            "detail": "",
         }
     ]
+
+
+def test_append_check_results_persists_all_statuses_and_upgrades_skipped(tmp_path: Path) -> None:
+    from domain_finder.domain.models import DomainCheckResult, DomainCheckStatus
+
+    txt = tmp_path / "results.txt"
+    report = tmp_path / "results.csv"
+    writer = ResultWriter(str(txt), str(report))
+    writer.append_unchecked(["taken.com", "maybe.com"])
+
+    writer.append_check_results(
+        [
+            DomainCheckResult(
+                domain="taken.com",
+                status=DomainCheckStatus.REGISTERED,
+                source="rdap",
+                checked_at=42.0,
+                detail="domain object exists",
+            ),
+            DomainCheckResult(
+                domain="maybe.com",
+                status=DomainCheckStatus.NETWORK_ERROR,
+                source="unknown",
+                checked_at=43.0,
+                detail="timeout",
+            ),
+        ]
+    )
+
+    with report.open(newline="", encoding="utf-8") as handle:
+        rows = {row["domain"]: row for row in csv.DictReader(handle)}
+    assert rows["taken.com"] == {
+        "domain": "taken.com",
+        "status": "registered",
+        "available": "false",
+        "source": "rdap",
+        "checked_at": "42",
+        "detail": "domain object exists",
+    }
+    assert rows["maybe.com"] == {
+        "domain": "maybe.com",
+        "status": "network_error",
+        "available": "",
+        "source": "unknown",
+        "checked_at": "43",
+        "detail": "timeout",
+    }
+
+
+def test_legacy_csv_is_migrated_when_new_result_is_written(tmp_path: Path) -> None:
+    from domain_finder.domain.models import DomainCheckResult, DomainCheckStatus
+
+    txt = tmp_path / "results.txt"
+    report = tmp_path / "results.csv"
+    report.write_text(
+        "domain,available,source,checked_at\nalpha.com,,skipped,\n",
+        encoding="utf-8",
+    )
+    writer = ResultWriter(str(txt), str(report))
+    writer.append_check_results(
+        [
+            DomainCheckResult(
+                domain="alpha.com",
+                status=DomainCheckStatus.RESERVED,
+                source="policy",
+                checked_at=50.0,
+                detail="reserved name",
+            )
+        ]
+    )
+
+    with report.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert rows[0]["status"] == "reserved"
+    assert rows[0]["available"] == "false"
+    assert rows[0]["detail"] == "reserved name"

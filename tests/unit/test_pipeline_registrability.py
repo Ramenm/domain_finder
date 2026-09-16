@@ -46,10 +46,10 @@ class MemoryRepo:
 
 class RecordingWriter:
     def __init__(self) -> None:
-        self.available = []
+        self.results = []
 
-    def append_available(self, records) -> None:
-        self.available.extend(records)
+    def append_check_results(self, results) -> None:
+        self.results.extend(results)
 
 
 def test_pipeline_reports_unregistered_separately_from_registrable() -> None:
@@ -71,4 +71,4 @@ def test_pipeline_reports_unregistered_separately_from_registrable() -> None:
     assert result.total_available == 1
     assert result.unregistered_domains == ["alpha.com"]
     assert result.total_unregistered == 1
-    assert [row[0] for row in writer.available] == ["beta.com"]
+    assert {row.domain for row in writer.results} == {"alpha.com", "beta.com"}

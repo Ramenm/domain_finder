@@ -64,8 +64,10 @@ def test_skip_check_saves_generated_domains_without_claiming_availability(tmp_pa
     assert rows == [
         {
             "domain": "alphaedge.com",
+            "status": "skipped",
             "available": "",
             "source": "skipped",
             "checked_at": "",
+            "detail": "",
         }
     ]

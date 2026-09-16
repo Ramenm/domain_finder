@@ -181,7 +181,6 @@ class RunDomainSearchUseCase:
 
                     # Collect confirmed registrable domains
                     newly_available: list[str] = []
-                    to_write = []
                     checked_count = 0
                     available_count = 0
 
@@ -199,7 +198,6 @@ class RunDomainSearchUseCase:
                         if result.is_registrable:
                             available_count += 1
                             newly_available.append(domain)
-                            to_write.append((domain, result.source, result.checked_at))
                         elif result.status is DomainCheckStatus.UNREGISTERED:
                             all_unregistered.append(domain)
                             logger.debug(
@@ -223,8 +221,8 @@ class RunDomainSearchUseCase:
                             f"Iteration {iteration}: no results returned for {len(domain_names)} domains"
                         )
 
+                    self.writer.append_check_results(results.values())
                     if newly_available:
-                        self.writer.append_available(to_write)
                         all_available.extend(newly_available)
 
                     all_suggested.extend(domain_names)
