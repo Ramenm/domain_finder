@@ -147,6 +147,7 @@ def test_mixed_registry_results_are_visible_and_persisted(monkeypatch, tmp_path)
     assert "Inconclusive / errors" in result.output
     assert "generating domain candidates" in result.output
     assert "checking 6 candidate(s)" in result.output
+    assert "\x1b[" not in result.output
 
 
 def test_dot_only_tld_fails_before_external_work(monkeypatch, tmp_path) -> None:

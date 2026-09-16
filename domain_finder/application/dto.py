@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+TLD_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
 
 class DomainSearchRequest(BaseModel):
@@ -50,8 +53,19 @@ class DomainSearchRequest(BaseModel):
     @field_validator("tlds")
     @classmethod
     def normalize_tlds(cls, values: list[str]) -> list[str]:
-        normalized = [value.strip().lower().lstrip(".").rstrip(".") for value in values]
-        normalized = [value for value in normalized if value]
+        normalized: list[str] = []
+        for value in values:
+            raw = value.strip().lower().strip(".")
+            if not raw:
+                continue
+            try:
+                ascii_tld = raw.encode("idna").decode("ascii")
+            except UnicodeError as exc:
+                raise ValueError(f"invalid TLD: {value!r}") from exc
+            labels = ascii_tld.split(".")
+            if any(not TLD_LABEL_RE.fullmatch(label) for label in labels):
+                raise ValueError(f"invalid TLD: {value!r}")
+            normalized.append(ascii_tld)
         if not normalized:
             raise ValueError("at least one non-empty TLD is required")
         return list(dict.fromkeys(normalized))

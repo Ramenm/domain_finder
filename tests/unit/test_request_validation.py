@@ -27,3 +27,17 @@ def test_request_rejects_invalid_user_values(overrides: dict[str, object]) -> No
 def test_request_normalizes_tlds() -> None:
     request = DomainSearchRequest(topic="developer tools", tlds=[".COM", " io "])
     assert request.tlds == ["com", "io"]
+
+
+def test_request_rejects_invalid_tld_syntax() -> None:
+    from pydantic import ValidationError
+
+    invalid_tlds = [["co m"], ["-com"], ["com-"], ["com/evil"], [".."]]
+    for tlds in invalid_tlds:
+        with pytest.raises(ValidationError):
+            DomainSearchRequest(topic="developer tools", tlds=tlds)
+
+
+def test_request_normalizes_idna_and_compound_tlds() -> None:
+    request = DomainSearchRequest(topic="developer tools", tlds=[".РФ", "co.uk"])
+    assert request.tlds == ["xn--p1ai", "co.uk"]

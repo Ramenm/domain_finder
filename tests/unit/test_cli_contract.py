@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import inspect
 
+import pytest
+import typer
 from typer.testing import CliRunner
 
 from domain_finder.cli.app import app
@@ -80,3 +82,18 @@ def test_wizard_uses_shared_execution_helper_instead_of_calling_run() -> None:
     source = inspect.getsource(wizard_module.wizard)
     assert "_execute_request(" in source
     assert "\n    run(" not in source
+
+
+def test_wizard_invalid_environment_is_concise(monkeypatch, capsys) -> None:
+    monkeypatch.setenv("MAX_RETRIES", "not-an-int")
+    monkeypatch.setattr(
+        wizard_module.typer, "prompt", lambda _text, default=None, **_kwargs: default
+    )
+
+    with pytest.raises(typer.Exit) as exc:
+        wizard_module.wizard()
+
+    output = capsys.readouterr().out
+    assert exc.value.exit_code == 2
+    assert "Invalid configuration" in output
+    assert "pydantic" not in output.lower()
