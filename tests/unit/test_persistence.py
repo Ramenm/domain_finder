@@ -46,3 +46,24 @@ def test_csv_writer_quotes_fields_safely(tmp_path: Path) -> None:
         rows = list(csv.DictReader(handle))
     assert rows[0]["domain"] == "odd,name.com"
     assert rows[0]["source"] == "rdap,registry"
+
+
+def test_confirmed_result_upgrades_prior_unchecked_record(tmp_path: Path) -> None:
+    txt = tmp_path / "results.txt"
+    report = tmp_path / "results.csv"
+    ResultWriter(str(txt), str(report)).append_unchecked(["alpha.com"])
+
+    reopened = ResultWriter(str(txt), str(report))
+    reopened.append_available([("alpha.com", "rdap", 42.0)])
+
+    assert txt.read_text(encoding="utf-8").splitlines() == ["alpha.com"]
+    with report.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert rows == [
+        {
+            "domain": "alpha.com",
+            "available": "true",
+            "source": "rdap",
+            "checked_at": "42",
+        }
+    ]

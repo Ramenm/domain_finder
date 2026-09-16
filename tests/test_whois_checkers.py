@@ -9,7 +9,7 @@ import time
 import pytest
 
 from domain_finder.domain.errors import DomainCheckError
-from domain_finder.domain.models import DomainCheckResult
+from domain_finder.domain.models import DomainCheckResult, DomainCheckStatus
 from domain_finder.infrastructure.whois.checker import DomainChecker
 from domain_finder.infrastructure.whois.rdap_client import RdapClient
 from domain_finder.infrastructure.whois.whois_client import WhoisClient
@@ -105,6 +105,17 @@ def generate_random_domains(
     return domains
 
 
+def assert_result_semantics(result: DomainCheckResult) -> None:
+    """Assert the documented tri-state availability contract."""
+    assert result.status is not None
+    if result.status in {DomainCheckStatus.AVAILABLE, DomainCheckStatus.REGISTRABLE}:
+        assert result.available is True
+    elif result.status in {DomainCheckStatus.REGISTERED, DomainCheckStatus.RESERVED}:
+        assert result.available is False
+    else:
+        assert result.available is None
+
+
 class TestRdapClient:
     """Tests for RDAP client with random domains."""
 
@@ -119,7 +130,7 @@ class TestRdapClient:
             assert isinstance(result, DomainCheckResult)
             assert result.domain == domain
             assert result.source == "rdap"
-            assert isinstance(result.available, bool)
+            assert_result_semantics(result)
             assert result.checked_at > 0
         except DomainCheckError:
             # Some domains might fail due to network issues or TLD support
@@ -195,7 +206,7 @@ class TestRdapClient:
             assert isinstance(result, DomainCheckResult)
             assert result.domain in domains
             assert result.source == "rdap"
-            assert isinstance(result.available, bool)
+            assert_result_semantics(result)
 
 
 class TestWhoisClient:
@@ -211,7 +222,7 @@ class TestWhoisClient:
         assert isinstance(result, DomainCheckResult)
         assert result.domain == domain
         assert result.source == "whois"
-        assert isinstance(result.available, bool)
+        assert_result_semantics(result)
         assert result.checked_at > 0
 
     def test_whois_client_multiple_random_domains(self):
@@ -281,8 +292,8 @@ class TestDomainChecker:
             result = checker.check_domain(domain)
             assert isinstance(result, DomainCheckResult)
             assert result.domain == domain
-            assert result.source in ("rdap", "whois", "unknown")
-            assert isinstance(result.available, bool)
+            assert result.source in ("rdap", "whois", "dns", "policy", "unknown")
+            assert_result_semantics(result)
         except DomainCheckError:
             # Some domains might fail due to network issues or TLD support
             # This is acceptable for random domain testing
@@ -312,7 +323,7 @@ class TestDomainChecker:
             result = results[domain]
             assert isinstance(result, DomainCheckResult)
             assert result.domain == domain
-            assert result.source in ("rdap", "whois", "unknown")
+            assert result.source in ("rdap", "whois", "dns", "policy", "unknown")
 
     def test_domain_checker_large_scale_random_domains(self):
         """Test DomainChecker with a large number of random domains."""
@@ -341,8 +352,8 @@ class TestDomainChecker:
         rdap_count = sum(1 for r in results.values() if r.source == "rdap")
         whois_count = sum(1 for r in results.values() if r.source == "whois")
         unknown_count = sum(1 for r in results.values() if r.source == "unknown")
-        available_count = sum(1 for r in results.values() if r.available)
-        unavailable_count = sum(1 for r in results.values() if not r.available)
+        available_count = sum(1 for r in results.values() if r.available is True)
+        unavailable_count = sum(1 for r in results.values() if r.available is False)
 
         print("\nDomainChecker Large Scale Test:")
         print(f"  Total domains: {len(domains)}")
@@ -360,8 +371,8 @@ class TestDomainChecker:
         for domain, result in results.items():
             assert isinstance(result, DomainCheckResult)
             assert result.domain == domain
-            assert result.source in ("rdap", "whois", "unknown")
-            assert isinstance(result.available, bool)
+            assert result.source in ("rdap", "whois", "dns", "policy", "unknown")
+            assert_result_semantics(result)
 
     def test_domain_checker_very_large_scale(self):
         """Test DomainChecker with a very large number of random domains."""
@@ -531,7 +542,7 @@ class TestRegisteredDomains:
         print(f"  Time elapsed: {elapsed:.2f}s")
 
         # Check that most domains were correctly identified as unavailable
-        unavailable_count = sum(1 for _, r in results if not r.available)
+        unavailable_count = sum(1 for _, r in results if r.available is False)
         print(f"  Correctly identified as unavailable: {unavailable_count}/{len(results)}")
 
         assert len(results) > 0, "Should get at least some results"
@@ -555,7 +566,7 @@ class TestRegisteredDomains:
 
         elapsed = time.time() - start_time
 
-        unavailable_count = sum(1 for _, r in results if not r.available)
+        unavailable_count = sum(1 for _, r in results if r.available is False)
 
         print("\nWHOIS Popular Registered Domains Test:")
         print(f"  Total domains: {len(POPULAR_REGISTERED_DOMAINS[:15])}")
@@ -587,8 +598,8 @@ class TestRegisteredDomains:
         rdap_count = sum(1 for r in results.values() if r.source == "rdap")
         whois_count = sum(1 for r in results.values() if r.source == "whois")
         unknown_count = sum(1 for r in results.values() if r.source == "unknown")
-        unavailable_count = sum(1 for r in results.values() if not r.available)
-        available_count = sum(1 for r in results.values() if r.available)
+        unavailable_count = sum(1 for r in results.values() if r.available is False)
+        available_count = sum(1 for r in results.values() if r.available is True)
 
         print("\nDomainChecker Popular Registered Domains Test:")
         print(f"  Total domains: {len(domains)}")
@@ -609,7 +620,7 @@ class TestRegisteredDomains:
         for domain, result in results.items():
             assert isinstance(result, DomainCheckResult)
             assert result.domain == domain
-            assert result.source in ("rdap", "whois", "unknown")
+            assert result.source in ("rdap", "whois", "dns", "policy", "unknown")
 
         # All popular domains should be correctly identified as unavailable (100%)
         assert unavailable_count == len(domains), (
@@ -618,7 +629,7 @@ class TestRegisteredDomains:
         )
 
     def test_domain_checker_mixed_random_and_registered(self):
-        """Test DomainChecker with mix of random (likely available) and registered domains."""
+        """Test DomainChecker with mix of random (likely unregistered) and registered domains."""
         checker = DomainChecker(
             prefer_rdap=True,
             whois_fallback=True,  # Enable fallback for 100% accuracy
@@ -626,7 +637,7 @@ class TestRegisteredDomains:
             rdap_timeout=8.0,
         )
 
-        # Mix random domains (likely available) with registered domains
+        # Mix random domains (likely unregistered) with registered domains
         # Use medium-length random domains (20-30 chars) - these are unlikely to be taken
         # Very long domains (60+ chars) cause WHOIS timeouts
         random_domains = generate_random_domains(
@@ -647,11 +658,11 @@ class TestRegisteredDomains:
 
         # Check random domains (most should be available)
         random_results = {d: results[d] for d in random_domains}
-        random_available = sum(1 for r in random_results.values() if r.available)
+        random_available = sum(1 for r in random_results.values() if r.available is True)
 
         # Check registered domains (all should be unavailable)
         registered_results = {d: results[d] for d in registered_domains}
-        registered_unavailable = sum(1 for r in registered_results.values() if not r.available)
+        registered_unavailable = sum(1 for r in registered_results.values() if r.available is False)
 
         print("\nDomainChecker Mixed Test:")
         print(f"  Random domains: {len(random_domains)}")
@@ -681,5 +692,5 @@ class TestRegisteredDomains:
         for domain, result in random_results.items():
             assert isinstance(result, DomainCheckResult)
             assert result.domain == domain
-            assert isinstance(result.available, bool)
-            assert result.source in ("rdap", "whois", "unknown")
+            assert_result_semantics(result)
+            assert result.source in ("rdap", "whois", "dns", "policy", "unknown")

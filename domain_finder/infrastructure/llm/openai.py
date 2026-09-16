@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from ipaddress import ip_address
 from urllib.parse import urlparse
 
 from domain_finder.domain.errors import ProviderError
@@ -107,11 +108,14 @@ class OpenAIProvider(BaseLLMProvider):
             # Extract domain from URL for custom providers
             try:
                 parsed = urlparse(base_url)
-                domain = parsed.netloc or parsed.path.split("/")[0]
+                domain = parsed.hostname or parsed.path.split("/")[0]
                 if domain:
-                    # Remove port if present
-                    domain = domain.split(":")[0]
-                    # Get main domain part
+                    try:
+                        ip_address(domain)
+                    except ValueError:
+                        pass
+                    else:
+                        return domain
                     parts = domain.split(".")
                     if len(parts) >= 2:
                         main_domain = parts[-2]  # e.g., "example" from "api.example.com"

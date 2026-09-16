@@ -28,7 +28,7 @@ def wizard() -> None:
     model = typer.prompt("🎯 Model (press Enter for default value)", default="")
     use_rdap_str = typer.prompt("Use RDAP for checking? (y/n)", default="y")
     whois_fallback = typer.prompt(
-        "🔄 Use WHOIS as fallback method if RDAP is uncertain? (y/n)", default="n"
+        "🔄 Use WHOIS as fallback method if RDAP is uncertain? (y/n)", default="y"
     )
     max_workers = typer.prompt("👷 Number of threads for domain checking", default=20)
     min_len = typer.prompt("📏 Minimum domain name length (without TLD)", default=4)
